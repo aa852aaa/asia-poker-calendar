@@ -16,14 +16,17 @@ function num(x: string): number | null {
 }
 
 export default async function Page() {
+  const font = { fontFamily: "system-ui, sans-serif" as const };
+
   try {
     const csvUrl = process.env.SHEET_CSV_URL;
+
     if (!csvUrl) {
       return (
-        <main style={{ padding: 24, fontFamily: "system-ui, sans-serif" }}>
+        <main style={{ padding: 24, ...font }}>
           <h1 style={{ fontSize: 24, fontWeight: 700 }}>Asia Poker Calendar</h1>
           <p style={{ marginTop: 12 }}>
-            ❌ Missing <code>SHEET_CSV_URL</code> (Vercel 環境變數沒設定到 Production 或沒 redeploy)
+            ❌ Missing <code>SHEET_CSV_URL</code> (請到 Vercel → Settings → Environment Variables 設定，並 Redeploy)
           </p>
         </main>
       );
@@ -34,38 +37,38 @@ export default async function Page() {
 
     if (!resp.ok) {
       return (
-        <main style={{ padding: 24, fontFamily: "system-ui, sans-serif" }}>
+        <main style={{ padding: 24, ...font }}>
           <h1 style={{ fontSize: 24, fontWeight: 700 }}>Asia Poker Calendar</h1>
-          <p style={{ marginTop: 12 }}>❌ Fetch CSV failed: {resp.status} {resp.statusText}</p>
+          <p style={{ marginTop: 12 }}>
+            ❌ Fetch CSV failed: {resp.status} {resp.statusText}
+          </p>
           <pre style={{ whiteSpace: "pre-wrap", marginTop: 12, padding: 12, border: "1px solid #ddd" }}>
-{text.slice(0, 400)}
+            {text.slice(0, 400)}
           </pre>
         </main>
       );
     }
 
-    // 有時 Google 會回 HTML（例如權限/redirect），我們直接提示你
     if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
       return (
-        <main style={{ padding: 24, fontFamily: "system-ui, sans-serif" }}>
+        <main style={{ padding: 24, ...font }}>
           <h1 style={{ fontSize: 24, fontWeight: 700 }}>Asia Poker Calendar</h1>
           <p style={{ marginTop: 12 }}>
-            ❌ CSV URL 回傳的不是 CSV（看起來是 HTML）。通常是 Sheets 沒有正確 Publish 成 CSV，或 URL 不是 pub?output=csv。
+            ❌ CSV URL 回傳的是 HTML（不是 CSV）。通常是 Sheets 沒有 Publish 成 CSV 或連結貼錯。
           </p>
           <pre style={{ whiteSpace: "pre-wrap", marginTop: 12, padding: 12, border: "1px solid #ddd" }}>
-{text.slice(0, 400)}
+            {text.slice(0, 400)}
           </pre>
         </main>
       );
     }
 
     const parsed = Papa.parse<Row>(text, { header: true, skipEmptyLines: true });
-
     const rows = (parsed.data || []).filter((r) => r["Start Date"] && r["Tournament"]);
     rows.sort((a, b) => new Date(a["Start Date"]).getTime() - new Date(b["Start Date"]).getTime());
 
     return (
-      <main style={{ padding: 24, fontFamily: "system-ui, sans-serif" }}>
+      <main style={{ padding: 24, ...font }}>
         <h1 style={{ fontSize: 24, fontWeight: 700 }}>Asia Poker Calendar</h1>
 
         <div style={{ overflowX: "auto", marginTop: 16 }}>
@@ -110,11 +113,11 @@ export default async function Page() {
     );
   } catch (e: any) {
     return (
-      <main style={{ padding: 24, fontFamily: "system-ui, sans-serif" }}>
+      <main style={{ padding: 24, ...font }}>
         <h1 style={{ fontSize: 24, fontWeight: 700 }}>Asia Poker Calendar</h1>
         <p style={{ marginTop: 12 }}>❌ Server error:</p>
         <pre style={{ whiteSpace: "pre-wrap", marginTop: 12, padding: 12, border: "1px solid #ddd" }}>
-{String(e?.stack || e?.message || e)}
+          {String(e?.stack || e?.message || e)}
         </pre>
       </main>
     );
