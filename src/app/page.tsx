@@ -1,3 +1,5 @@
+import Papa from "papaparse";
+
 type Row = {
   "Start Date": string;
   "End Date": string;
@@ -9,14 +11,19 @@ type Row = {
 };
 
 function num(x: string): number | null {
-  const n = Number(String(x).replace(/[, ]/g, ""));
+  const n = Number(String(x ?? "").replace(/[, ]/g, ""));
   return Number.isFinite(n) ? n : null;
 }
 
 export default async function Page() {
-  const res = await fetch("http://localhost:3000/api/schedule", { cache: "no-store" });
-  const data = await res.json();
-  const rows: Row[] = data.rows ?? [];
+  const csvUrl = process.env.SHEET_CSV_URL;
+  if (!csvUrl) throw new Error("Missing SHEET_CSV_URL");
+
+  const csvText = await fetch(csvUrl, { cache: "no-store" }).then((r) => r.text());
+  const parsed = Papa.parse<Row>(csvText, { header: true, skipEmptyLines: true });
+
+  const rows = (parsed.data || []).filter((r) => r["Start Date"] && r["Tournament"]);
+  rows.sort((a, b) => new Date(a["Start Date"]).getTime() - new Date(b["Start Date"]).getTime());
 
   return (
     <main style={{ padding: 24, fontFamily: "system-ui, sans-serif" }}>
@@ -38,7 +45,6 @@ export default async function Page() {
             {rows.map((r, i) => {
               const amount = num(r["ME Buy-in"]);
               const ccy = (r["Currency"] || "").toUpperCase();
-
               return (
                 <tr key={i} style={{ borderTop: "1px solid #ddd" }}>
                   <td>{r["Start Date"]}</td>
@@ -62,5 +68,3 @@ export default async function Page() {
         </table>
       </div>
     </main>
-  );
-}
