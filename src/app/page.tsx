@@ -1,4 +1,5 @@
-import Papa from "papaparse";
+export const revalidate = 60;
+import { headers } from "next/headers";
 
 type Row = {
   "Start Date": string;
@@ -8,9 +9,10 @@ type Row = {
   "ME Buy-in": string;
   "Currency": string;
   "Handbook URL": string;
+  usd?: number | null;
 };
 
-function num(x: string): number | null {
+function toNumber(x: string | undefined): number | null {
   const n = Number(String(x ?? "").replace(/[, ]/g, ""));
   return Number.isFinite(n) ? n : null;
 }
@@ -19,53 +21,58 @@ export default async function Page() {
   const font = { fontFamily: "system-ui, sans-serif" as const };
 
   try {
-    const csvUrl = process.env.SHEET_CSV_URL;
+    // ✅ 改成抓我們的 API（這裡會包含 usd）
+    const h = await headers();
+    const host = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000";
+    const proto = h.get("x-forwarded-proto") ?? "http";
+    const url = `${proto}://${host}/api/schedule`;
 
-    if (!csvUrl) {
+    const res = await fetch(url, { cache: "no-store" });
+
+    const text = await res.text();
+
+    if (!res.ok) {
       return (
         <main style={{ padding: 24, ...font }}>
           <h1 style={{ fontSize: 24, fontWeight: 700 }}>Asia Poker Calendar</h1>
           <p style={{ marginTop: 12 }}>
-            ❌ Missing <code>SHEET_CSV_URL</code> (請到 Vercel → Settings → Environment Variables 設定，並 Redeploy)
-          </p>
-        </main>
-      );
-    }
-
-    const resp = await fetch(csvUrl, { cache: "no-store" });
-    const text = await resp.text();
-
-    if (!resp.ok) {
-      return (
-        <main style={{ padding: 24, ...font }}>
-          <h1 style={{ fontSize: 24, fontWeight: 700 }}>Asia Poker Calendar</h1>
-          <p style={{ marginTop: 12 }}>
-            ❌ Fetch CSV failed: {resp.status} {resp.statusText}
+            ❌ Fetch /api/schedule failed: {res.status} {res.statusText}
           </p>
           <pre style={{ whiteSpace: "pre-wrap", marginTop: 12, padding: 12, border: "1px solid #ddd" }}>
-            {text.slice(0, 400)}
+            {text.slice(0, 800)}
           </pre>
         </main>
       );
     }
 
-    if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
+    let data: any;
+    try {
+      data = JSON.parse(text);
+    } catch {
       return (
         <main style={{ padding: 24, ...font }}>
           <h1 style={{ fontSize: 24, fontWeight: 700 }}>Asia Poker Calendar</h1>
-          <p style={{ marginTop: 12 }}>
-            ❌ CSV URL 回傳的是 HTML（不是 CSV）。通常是 Sheets 沒有 Publish 成 CSV 或連結貼錯。
-          </p>
+          <p style={{ marginTop: 12 }}>❌ /api/schedule did not return JSON.</p>
           <pre style={{ whiteSpace: "pre-wrap", marginTop: 12, padding: 12, border: "1px solid #ddd" }}>
-            {text.slice(0, 400)}
+            {text.slice(0, 800)}
           </pre>
         </main>
       );
     }
 
-    const parsed = Papa.parse<Row>(text, { header: true, skipEmptyLines: true });
-    const rows = (parsed.data || []).filter((r) => r["Start Date"] && r["Tournament"]);
-    rows.sort((a, b) => new Date(a["Start Date"]).getTime() - new Date(b["Start Date"]).getTime());
+    if (data?.error) {
+      return (
+        <main style={{ padding: 24, ...font }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700 }}>Asia Poker Calendar</h1>
+          <p style={{ marginTop: 12 }}>❌ API error: {String(data.error)}</p>
+          <p style={{ marginTop: 8 }}>
+            （通常是 Vercel 沒設定 <code>SHEET_CSV_URL</code> 或 Sheets CSV 連結不對）
+          </p>
+        </main>
+      );
+    }
+
+    const rows: Row[] = data?.rows ?? [];
 
     return (
       <main style={{ padding: 24, ...font }}>
@@ -79,14 +86,17 @@ export default async function Page() {
                 <th align="left">End</th>
                 <th align="left">Location</th>
                 <th align="left">Tournament</th>
-                <th align="right">Buy-in</th>
-                <th align="right">Currency</th>
+                <th align="right">Buy-in (Local)</th>
+                <th align="right">Buy-in (USD)</th>
               </tr>
             </thead>
+
             <tbody>
               {rows.map((r, i) => {
-                const amount = num(r["ME Buy-in"]);
-                const ccy = (r["Currency"] || "").toUpperCase();
+                const amount = toNumber(r["ME Buy-in"]);
+                const ccy = String(r["Currency"] || "").toUpperCase();
+                const usd = r.usd;
+
                 return (
                   <tr key={i} style={{ borderTop: "1px solid #ddd" }}>
                     <td>{r["Start Date"]}</td>
@@ -101,8 +111,10 @@ export default async function Page() {
                         r["Tournament"]
                       )}
                     </td>
-                    <td align="right">{amount != null ? amount.toLocaleString() : r["ME Buy-in"]}</td>
-                    <td align="right">{ccy}</td>
+                    <td align="right">
+                      {amount != null ? `${ccy} ${amount.toLocaleString()}` : r["ME Buy-in"]}
+                    </td>
+                    <td align="right">{usd != null ? `$${Number(usd).toFixed(0)}` : "-"}</td>
                   </tr>
                 );
               })}
