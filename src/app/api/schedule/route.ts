@@ -19,6 +19,28 @@ function toNumber(x: string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// ====== NEW: 過濾「已結束超過 N 天」 ======
+const HIDE_ENDED_AFTER_DAYS = 3;
+const TAIPEI_TZ = "+08:00";
+
+function parseYMDToTaipeiDate(dateStr: string): Date | null {
+  const s = String(dateStr ?? "").trim();
+  if (!s) return null;
+
+  // 支援 YYYY-MM-DD 或 YYYY/MM/DD
+  const m = s.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/);
+  if (!m) return null;
+
+  const [, y, mo, d] = m;
+  // 固定用台北時區的 00:00
+  return new Date(`${y}-${mo}-${d}T00:00:00+08:00`);
+}
+
+
+function daysAgo(days: number): Date {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+}
+// ==========================================
 
 // 每日更新一次（Next.js fetch cache）
 async function getFxRatesUSDBase(): Promise<Record<string, number>> {
@@ -57,14 +79,22 @@ export async function GET() {
   const parsed = Papa.parse<Row>(csvText, { header: true, skipEmptyLines: true });
   const rawRows = (parsed.data || []).filter((r) => r["Start Date"] && r["Tournament"]);
 
+  // ✅ NEW: 以 End Date 為準，移除已結束超過 3 天的賽程
+  const cutoff = daysAgo(HIDE_ENDED_AFTER_DAYS);
+  const filteredRows = rawRows.filter((r) => {
+    const end = parseYMDToTaipeiDate(r["End Date"]);
+    if (!end) return true; // End Date 缺失或格式不對：先保留避免誤刪
+    return end.getTime() >= cutoff.getTime();
+  });
+
   // 排序（Start Date: YYYY-MM-DD）
-  rawRows.sort((a, b) => new Date(a["Start Date"]).getTime() - new Date(b["Start Date"]).getTime());
+  filteredRows.sort((a, b) => new Date(a["Start Date"]).getTime() - new Date(b["Start Date"]).getTime());
 
   // 匯率
   const rates = await getFxRatesUSDBase();
 
   // 計算 USD（若你表格已填 ME Buy-in(USD)，就優先用它；否則自算）
-  const rows = rawRows.map((r) => {
+  const rows = filteredRows.map((r) => {
     const usdFromSheet = toNumber(r["ME Buy-in(USD)"]);
     if (usdFromSheet != null) {
       return { ...r, usd: usdFromSheet };
