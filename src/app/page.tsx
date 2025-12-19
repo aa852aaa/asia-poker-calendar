@@ -112,7 +112,18 @@ export default async function Page() {
                       )}
                     </td>
                     <td align="right">
-                      {amount != null ? `${ccy} ${amount.toLocaleString()}` : r["ME Buy-in"]}
+                      {(() => {
+                        const raw = String(r["ME Buy-in"] ?? "").trim();
+
+                        // ✅ 沒填 / 空白 → 顯示 "-"
+                        if (!raw) return "-";
+
+                        // ✅ 有數字 → 顯示 幣別 + 千分位
+                        if (amount != null) return `${ccy} ${amount.toLocaleString()}`;
+
+                        // ✅ 不是數字但有內容（例如 TBA / TBD）→ 原樣顯示
+                        return raw;
+                      })()}
                     </td>
                     <td align="right">{usd != null ? `$${Number(usd).toFixed(0)}` : "-"}</td>
                   </tr>
