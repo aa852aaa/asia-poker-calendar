@@ -76,3 +76,192 @@ body {
   background: var(--bg);
   color: var(--text);
 }
+/* ===== ScheduleTable styles ===== */
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.controlItem {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.controlGrow {
+  flex: 1 1 280px;
+}
+.label {
+  font-weight: 700;
+  color: var(--text);
+}
+.select,
+.input {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--input-bg);
+  color: var(--text);
+}
+.input {
+  width: 100%;
+}
+.resultCount {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.chip {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--chip-bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.chipActive {
+  background: var(--chip-active-bg);
+  color: var(--chip-active-text);
+  border-color: var(--chip-active-bg);
+}
+
+/* 表格：欄寬以內容最大寬決定 + 橫向滑動 */
+.tableWrap {
+  overflow-x: auto;
+}
+.table {
+  border-collapse: collapse;
+  width: max-content;
+  min-width: 100%;
+}
+th,
+td {
+  border-top: 1px solid var(--border);
+  vertical-align: top;
+}
+th {
+  border-top: none;
+  text-align: left;
+  position: sticky;
+  top: 0;
+  background: var(--header-bg);
+  z-index: 1;
+  color: var(--text);
+}
+.cell {
+  padding: 10px;
+  color: var(--text);
+}
+.nowrap {
+  white-space: nowrap;
+}
+.tournamentCell {
+  max-width: 520px;
+  white-space: normal;
+}
+
+.tLink,
+.ig {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* 淡色 */
+.rowSoon {
+  opacity: 0.6;
+}
+
+/* 手機卡片 */
+.cards {
+  display: none;
+  margin-top: 10px;
+  gap: 10px;
+}
+.card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px;
+  background: var(--card);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.04);
+  color: var(--text);
+}
+.cardSoon {
+  opacity: 0.65;
+}
+.cardTitle {
+  font-weight: 800;
+  font-size: 16px;
+  line-height: 1.25;
+}
+.cardMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.pill {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(127, 127, 127, 0.16);
+  color: var(--text);
+}
+.cardBottom {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+.kv .k {
+  font-size: 12px;
+  color: var(--muted);
+}
+.kv .v {
+  margin-top: 2px;
+  font-weight: 700;
+}
+.soonHint {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* footer */
+.footer {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.dot {
+  opacity: 0.6;
+}
+
+@media (max-width: 720px) {
+  .resultCount {
+    width: 100%;
+    margin-left: 0;
+  }
+  .tableWrap {
+    display: none;
+  }
+  .cards {
+    display: grid;
+  }
+  .tournamentCell {
+    max-width: none;
+  }
+}
