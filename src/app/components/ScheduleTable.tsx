@@ -24,14 +24,36 @@ function norm(s: string): string {
   return String(s ?? "").trim().toLowerCase();
 }
 
-// ✅ 固定只提供兩個快選（不影響下拉與顯示）
+// 支援 YYYY-MM-DD / YYYY/MM/DD / YYYY-M-D / YYYY/M/D
+function parseDateFlexible(dateStr: string): Date | null {
+  const s = String(dateStr ?? "").trim().replace(/\u3000/g, " ").trim();
+  if (!s) return null;
+  const m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return null;
+  return new Date(y, mo - 1, d, 0, 0, 0, 0);
+}
+
+function daysUntilEnd(endStr: string): number | null {
+  const end = parseDateFlexible(endStr);
+  if (!end) return null;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  const diffMs = end.getTime() - today.getTime();
+  return Math.floor(diffMs / (24 * 60 * 60 * 1000)); // 0=今天結束, 1=明天結束
+}
+
+// 固定只提供兩個快選 chips（下拉維持原樣）
 const QUICK_LOCATION_KEYWORDS = ["Taiwan", "Korea"] as const;
 
 export default function ScheduleTable({ rows }: { rows: Row[] }) {
   const [locationPick, setLocationPick] = useState<string>("ALL");
   const [tournamentQuery, setTournamentQuery] = useState<string>("");
 
-  // 產生 Location 清單（去重 + 排序）— 下拉維持原樣
+  // 下拉：完整 Location 清單
   const locations = useMemo(() => {
     const set = new Set<string>();
     for (const r of rows) {
@@ -48,50 +70,31 @@ export default function ScheduleTable({ rows }: { rows: Row[] }) {
     return rows.filter((r) => {
       const locRaw = String(r["Location"] ?? "").trim();
 
-      // ✅ 篩選器維持原樣：
-      // - ALL：不篩
-      // - 下拉選到某個完整 Location：用全等
-      // - chips（Taiwan/Korea）：用包含比對（支援 "Taipei, Taiwan" 這類）
+      // Location 篩選：下拉用全等，chips 用包含
       let locOk = true;
       if (!locAll) {
         const isQuick = (QUICK_LOCATION_KEYWORDS as readonly string[]).includes(locationPick);
         locOk = isQuick ? norm(locRaw).includes(norm(locationPick)) : locRaw === locationPick;
       }
-
       if (!locOk) return false;
+
       if (!q) return true;
 
-      // Tournament 只做搜尋：比對 Tournament（也順手比對 Location，避免使用者打城市名卻搜不到）
       const t = norm(r["Tournament"]);
       const l = norm(r["Location"]);
       return t.includes(q) || l.includes(q);
     });
   }, [rows, locationPick, tournamentQuery]);
 
+  const igUrl = "https://www.instagram.com/asmallbean/"; // 你要換 IG 就改這裡
+
   return (
     <div style={{ marginTop: 16 }}>
       {/* 控制列 */}
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 12,
-          alignItems: "center",
-          marginBottom: 12,
-        }}
-      >
-        {/* Location 下拉（維持原樣） */}
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span style={{ fontWeight: 600 }}>Location</span>
-          <select
-            value={locationPick}
-            onChange={(e) => setLocationPick(e.target.value)}
-            style={{
-              padding: "6px 10px",
-              border: "1px solid #ddd",
-              borderRadius: 8,
-            }}
-          >
+      <div className="controls">
+        <label className="controlItem">
+          <span className="label">Location</span>
+          <select value={locationPick} onChange={(e) => setLocationPick(e.target.value)} className="select">
             <option value="ALL">All</option>
             {locations.map((loc) => (
               <option key={loc} value={loc}>
@@ -101,41 +104,24 @@ export default function ScheduleTable({ rows }: { rows: Row[] }) {
           </select>
         </label>
 
-        {/* Tournament 搜尋（維持原樣） */}
-        <label style={{ display: "flex", gap: 8, alignItems: "center", flex: "1 1 260px" }}>
-          <span style={{ fontWeight: 600 }}>Tournament</span>
+        <label className="controlItem controlGrow">
+          <span className="label">Tournament</span>
           <input
             value={tournamentQuery}
             onChange={(e) => setTournamentQuery(e.target.value)}
             placeholder="Search tournament..."
-            style={{
-              width: "100%",
-              padding: "6px 10px",
-              border: "1px solid #ddd",
-              borderRadius: 8,
-            }}
+            className="input"
           />
         </label>
 
-        {/* 結果數 */}
-        <div style={{ marginLeft: "auto", opacity: 0.8 }}>
+        <div className="resultCount">
           Showing <b>{filtered.length}</b> / {rows.length}
         </div>
       </div>
 
-      {/* Location 快選（chips）：只保留 Taiwan / Korea */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-        <button
-          onClick={() => setLocationPick("ALL")}
-          style={{
-            padding: "6px 10px",
-            borderRadius: 999,
-            border: "1px solid #ddd",
-            background: locationPick === "ALL" ? "#111" : "transparent",
-            color: locationPick === "ALL" ? "#fff" : "inherit",
-            cursor: "pointer",
-          }}
-        >
+      {/* 快選 chips */}
+      <div className="chips">
+        <button onClick={() => setLocationPick("ALL")} className={`chip ${locationPick === "ALL" ? "chipActive" : ""}`}>
           All
         </button>
 
@@ -143,14 +129,7 @@ export default function ScheduleTable({ rows }: { rows: Row[] }) {
           <button
             key={loc}
             onClick={() => setLocationPick(loc)}
-            style={{
-              padding: "6px 10px",
-              borderRadius: 999,
-              border: "1px solid #ddd",
-              background: locationPick === loc ? "#111" : "transparent",
-              color: locationPick === loc ? "#fff" : "inherit",
-              cursor: "pointer",
-            }}
+            className={`chip ${locationPick === loc ? "chipActive" : ""}`}
             title={loc}
           >
             {loc}
@@ -158,9 +137,9 @@ export default function ScheduleTable({ rows }: { rows: Row[] }) {
         ))}
       </div>
 
-      {/* 表格 */}
-      <div style={{ overflowX: "auto" }}>
-        <table cellPadding={10} style={{ borderCollapse: "collapse", width: "100%" }}>
+      {/* 桌機：表格 */}
+      <div className="tableWrap">
+        <table className="table">
           <thead>
             <tr>
               <th align="left">Start</th>
@@ -179,14 +158,19 @@ export default function ScheduleTable({ rows }: { rows: Row[] }) {
               const ccy = String(r["Currency"] || "").toUpperCase();
               const usd = r.usd;
 
+              const dLeft = daysUntilEnd(r["End Date"]);
+              // ✅ 結束前 3 天到結束後 3 天（你說你改成結束後 3 天就消失）
+              const endingSoon = dLeft != null && dLeft <= 3 && dLeft >= -3;
+
               return (
-                <tr key={`${r["Start Date"]}-${r["Tournament"]}-${i}`} style={{ borderTop: "1px solid #ddd" }}>
-                  <td>{r["Start Date"]}</td>
-                  <td>{r["End Date"]}</td>
-                  <td>{r["Location"]}</td>
-                  <td>
+                <tr key={`${r["Start Date"]}-${r["Tournament"]}-${i}`} className={`row ${endingSoon ? "rowSoon" : ""}`}>
+                  <td className="cell nowrap">{r["Start Date"]}</td>
+                  <td className="cell nowrap">{r["End Date"]}</td>
+                  <td className="cell nowrap">{r["Location"]}</td>
+
+                  <td className="cell tournamentCell">
                     {r["Handbook URL"] ? (
-                      <a href={r["Handbook URL"]} target="_blank" rel="noreferrer">
+                      <a className="tLink" href={r["Handbook URL"]} target="_blank" rel="noreferrer">
                         {r["Tournament"]}
                       </a>
                     ) : (
@@ -194,22 +178,289 @@ export default function ScheduleTable({ rows }: { rows: Row[] }) {
                     )}
                   </td>
 
-                  {/* Buy-in 空白顯示 '-' */}
-                  <td align="right">
+                  <td className="cell nowrap" style={{ textAlign: "right" }}>
                     {(() => {
                       if (!rawBuyin) return "-";
                       if (amount != null) return `${ccy} ${amount.toLocaleString()}`;
-                      return rawBuyin; // 例如 TBA/TBD
+                      return rawBuyin;
                     })()}
                   </td>
 
-                  <td align="right">{usd != null ? `$${Number(usd).toFixed(0)}` : "-"}</td>
+                  <td className="cell nowrap" style={{ textAlign: "right" }}>
+                    {usd != null ? `$${Number(usd).toFixed(0)}` : "-"}
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
+
+      {/* 手機：卡片 */}
+      <div className="cards">
+        {filtered.map((r, i) => {
+          const rawBuyin = String(r["ME Buy-in"] ?? "").trim();
+          const amount = toNumber(r["ME Buy-in"]);
+          const ccy = String(r["Currency"] || "").toUpperCase();
+          const usd = r.usd;
+
+          const dLeft = daysUntilEnd(r["End Date"]);
+          const endingSoon = dLeft != null && dLeft <= 3 && dLeft >= -3;
+
+          const buyLocal = (() => {
+            if (!rawBuyin) return "-";
+            if (amount != null) return `${ccy} ${amount.toLocaleString()}`;
+            return rawBuyin;
+          })();
+
+          return (
+            <div key={`${r["Start Date"]}-${r["Tournament"]}-${i}`} className={`card ${endingSoon ? "cardSoon" : ""}`}>
+              <div className="cardTop">
+                <div className="cardTitle">
+                  {r["Handbook URL"] ? (
+                    <a className="tLink" href={r["Handbook URL"]} target="_blank" rel="noreferrer">
+                      {r["Tournament"]}
+                    </a>
+                  ) : (
+                    r["Tournament"]
+                  )}
+                </div>
+
+                <div className="cardMeta">
+                  <span className="pill">
+                    {r["Start Date"]} → {r["End Date"]}
+                  </span>
+                  <span className="pill" title={r["Location"]}>
+                    {r["Location"]}
+                  </span>
+                </div>
+              </div>
+
+              <div className="cardBottom">
+                <div className="kv">
+                  <div className="k">Buy-in (Local)</div>
+                  <div className="v">{buyLocal}</div>
+                </div>
+                <div className="kv">
+                  <div className="k">Buy-in (USD)</div>
+                  <div className="v">{usd != null ? `$${Number(usd).toFixed(0)}` : "-"}</div>
+                </div>
+              </div>
+
+              {endingSoon && (
+                <div className="soonHint">
+                  ⏳ Ending soon
+                  {dLeft === 0 ? " (today)" : dLeft != null ? ` (${Math.abs(dLeft)} day${Math.abs(dLeft) === 1 ? "" : "s"} ${dLeft > 0 ? "left" : "after"})` : ""}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 浮水印 */}
+      <div className="footer">
+        <span>Made by 豆砸 AsmallBean</span>
+        <span className="dot">·</span>
+        <a className="ig" href={igUrl} target="_blank" rel="noreferrer">
+          IG
+        </a>
+      </div>
+
+      <style jsx>{`
+        .controls {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 12px;
+          align-items: center;
+          margin-bottom: 12px;
+        }
+        .controlItem {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+        }
+        .controlGrow {
+          flex: 1 1 280px;
+        }
+        .label {
+          font-weight: 700;
+          color: var(--text);
+        }
+        .select,
+        .input {
+          padding: 6px 10px;
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          background: var(--input-bg);
+          color: var(--text);
+        }
+        .input {
+          width: 100%;
+        }
+        .resultCount {
+          margin-left: auto;
+          color: var(--muted);
+        }
+
+        .chips {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          margin-bottom: 12px;
+        }
+        .chip {
+          padding: 6px 10px;
+          border-radius: 999px;
+          border: 1px solid var(--border);
+          background: var(--chip-bg);
+          color: var(--text);
+          cursor: pointer;
+        }
+        .chipActive {
+          background: var(--chip-active-bg);
+          color: var(--chip-active-text);
+          border-color: var(--chip-active-bg);
+        }
+
+        /* 欄寬：以內容最大寬決定 + 整表可橫向滑 */
+        .tableWrap {
+          overflow-x: auto;
+        }
+        .table {
+          border-collapse: collapse;
+          width: max-content;
+          min-width: 100%;
+        }
+        th,
+        td {
+          border-top: 1px solid var(--border);
+          vertical-align: top;
+        }
+        th {
+          border-top: none;
+          text-align: left;
+          position: sticky;
+          top: 0;
+          background: var(--header-bg);
+          z-index: 1;
+          color: var(--text);
+        }
+        .cell {
+          padding: 10px;
+          color: var(--text);
+        }
+        .nowrap {
+          white-space: nowrap;
+        }
+        .tournamentCell {
+          max-width: 520px;
+          white-space: normal;
+        }
+
+        /* 有超連結：藍色底線 */
+        .tLink {
+          color: var(--link);
+          text-decoration: underline;
+          text-underline-offset: 2px;
+        }
+
+        /* 快結束淡色（前 3 天到結束後 3 天） */
+        .rowSoon {
+          opacity: 0.6;
+        }
+
+        /* 手機版：卡片 */
+        .cards {
+          display: none;
+          margin-top: 10px;
+          gap: 10px;
+        }
+        .card {
+          border: 1px solid var(--border);
+          border-radius: 14px;
+          padding: 12px;
+          background: var(--card);
+          box-shadow: 0 1px 6px rgba(0, 0, 0, 0.04);
+          color: var(--text);
+        }
+        .cardSoon {
+          opacity: 0.65;
+        }
+        .cardTitle {
+          font-weight: 800;
+          font-size: 16px;
+          line-height: 1.25;
+        }
+        .cardMeta {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          margin-top: 8px;
+        }
+        .pill {
+          font-size: 12px;
+          padding: 4px 8px;
+          border-radius: 999px;
+          background: rgba(127, 127, 127, 0.16);
+          color: var(--text);
+        }
+        .cardBottom {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+          margin-top: 10px;
+        }
+        .kv .k {
+          font-size: 12px;
+          color: var(--muted);
+        }
+        .kv .v {
+          margin-top: 2px;
+          font-weight: 700;
+        }
+        .soonHint {
+          margin-top: 10px;
+          font-size: 12px;
+          color: var(--muted);
+        }
+
+        /* 浮水印 */
+        .footer {
+          margin-top: 18px;
+          padding-top: 14px;
+          border-top: 1px solid var(--border);
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          color: var(--muted);
+          font-size: 13px;
+        }
+        .dot {
+          opacity: 0.6;
+        }
+        .ig {
+          color: var(--link);
+          text-decoration: underline;
+          text-underline-offset: 2px;
+        }
+
+        @media (max-width: 720px) {
+          .resultCount {
+            width: 100%;
+            margin-left: 0;
+          }
+          .tableWrap {
+            display: none;
+          }
+          .cards {
+            display: grid;
+          }
+          .tournamentCell {
+            max-width: none;
+          }
+        }
+      `}</style>
     </div>
   );
 }
