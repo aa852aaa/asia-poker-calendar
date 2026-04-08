@@ -1,24 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-
-type Row = {
-  "Start Date": string;
-  "End Date": string;
-  "Location": string;
-  "Tournament": string;
-  "ME Buy-in": string;
-  "Currency": string;
-  "Handbook URL": string;
-  usd?: number | null;
-};
-
-function toNumber(x: string | undefined): number | null {
-  const s = String(x ?? "").trim();
-  if (!s) return null;
-  const n = Number(s.replace(/[, ]/g, ""));
-  return Number.isFinite(n) ? n : null;
-}
+import { Row, toNumber } from "../lib/types";
 
 function norm(s: string): string {
   return String(s ?? "").trim().toLowerCase();
@@ -40,10 +23,11 @@ function parseDateFlexible(dateStr: string): Date | null {
 function daysUntilEnd(endStr: string): number | null {
   const end = parseDateFlexible(endStr);
   if (!end) return null;
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  // 統一用台北時區 (UTC+8) 計算，避免不同時區用戶看到不同結果
+  const nowTaipei = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
+  const today = new Date(nowTaipei.getFullYear(), nowTaipei.getMonth(), nowTaipei.getDate(), 0, 0, 0, 0);
   const diffMs = end.getTime() - today.getTime();
-  return Math.floor(diffMs / (24 * 60 * 60 * 1000)); // 0=今天結束, 1=明天結束
+  return Math.floor(diffMs / (24 * 60 * 60 * 1000));
 }
 
 // 固定只提供兩個快選 chips（下拉維持原樣）

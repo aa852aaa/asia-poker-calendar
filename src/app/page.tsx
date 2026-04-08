@@ -1,18 +1,8 @@
 import { headers } from "next/headers";
 import ScheduleTable from "./components/ScheduleTable";
+import { Row } from "./lib/types";
 
 export const revalidate = 60;
-
-type Row = {
-  "Start Date": string;
-  "End Date": string;
-  "Location": string;
-  "Tournament": string;
-  "ME Buy-in": string;
-  "Currency": string;
-  "Handbook URL": string;
-  usd?: number | null;
-};
 
 export default async function Page() {
   const font = { fontFamily: "system-ui, sans-serif" as const };
@@ -24,7 +14,7 @@ export default async function Page() {
     const proto = h.get("x-forwarded-proto") ?? "http";
     const url = `${proto}://${host}/api/schedule`;
 
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetch(url, { next: { revalidate: 60 } });
     const text = await res.text();
 
     if (!res.ok) {

@@ -1,46 +1,26 @@
 import { NextResponse } from "next/server";
 import Papa from "papaparse";
+import { Row, toNumber } from "../../lib/types";
 
-type Row = {
-  "Start Date": string;
-  "End Date": string;
-  "Location": string;
-  "Tournament": string;
-  "ME Buy-in": string;
-  "ME Buy-in(USD)"?: string;
-  "Currency": string;
-  "Handbook URL": string;
-};
-
-function toNumber(x: string | undefined): number | null {
-  const s = String(x ?? "").trim();
-  if (!s) return null; // ✅ 空字串 / 空白 → 視為沒填，不要當 0
-  const n = Number(s.replace(/[, ]/g, ""));
-  return Number.isFinite(n) ? n : null;
-}
-
-// ====== NEW: 過濾「已結束超過 N 天」 ======
+// ====== 過濾「已結束超過 N 天」 ======
 const HIDE_ENDED_AFTER_DAYS = 3;
-const TAIPEI_TZ = "+08:00";
 
 function parseYMDToTaipeiDate(dateStr: string): Date | null {
   const s = String(dateStr ?? "").trim();
   if (!s) return null;
 
-  // 支援 YYYY-MM-DD 或 YYYY/MM/DD
-  const m = s.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/);
+  // 支援 YYYY-MM-DD / YYYY/MM/DD / YYYY-M-D / YYYY/M/D
+  const m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
   if (!m) return null;
 
   const [, y, mo, d] = m;
   // 固定用台北時區的 00:00
-  return new Date(`${y}-${mo}-${d}T00:00:00+08:00`);
+  return new Date(`${y}-${mo.padStart(2, "0")}-${d.padStart(2, "0")}T00:00:00+08:00`);
 }
-
 
 function daysAgo(days: number): Date {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 }
-// ==========================================
 
 // 每日更新一次（Next.js fetch cache）
 async function getFxRatesUSDBase(): Promise<Record<string, number>> {
@@ -57,7 +37,7 @@ function convertToUSD(amountLocal: number, ccyRaw: string, rates: Record<string,
   const ccy = (ccyRaw || "").trim().toUpperCase();
   if (!ccy) return null;
 
-  // 特例：USDT 當作 1:1 USD（你要更精準我之後可改成抓加密匯率）
+  // 特例：USDT 當作 1:1 USD
   if (ccy === "USDT") return amountLocal;
   if (ccy === "USD") return amountLocal;
 
@@ -79,7 +59,7 @@ export async function GET() {
   const parsed = Papa.parse<Row>(csvText, { header: true, skipEmptyLines: true });
   const rawRows = (parsed.data || []).filter((r) => r["Start Date"] && r["Tournament"]);
 
-  // ✅ NEW: 以 End Date 為準，移除已結束超過 3 天的賽程
+  // 以 End Date 為準，移除已結束超過 3 天的賽程
   const cutoff = daysAgo(HIDE_ENDED_AFTER_DAYS);
   const filteredRows = rawRows.filter((r) => {
     const end = parseYMDToTaipeiDate(r["End Date"]);
@@ -90,10 +70,15 @@ export async function GET() {
   // 排序（Start Date: YYYY-MM-DD）
   filteredRows.sort((a, b) => new Date(a["Start Date"]).getTime() - new Date(b["Start Date"]).getTime());
 
-  // 匯率
-  const rates = await getFxRatesUSDBase();
+  // 匯率（失敗時 fallback 為空，不影響主要賽程資料）
+  let rates: Record<string, number> = {};
+  try {
+    rates = await getFxRatesUSDBase();
+  } catch (e) {
+    console.error("Failed to fetch exchange rates, USD conversion will be unavailable:", e);
+  }
 
-  // 計算 USD（若你表格已填 ME Buy-in(USD)，就優先用它；否則自算）
+  // 計算 USD（若表格已填 ME Buy-in(USD)，就優先用它；否則自算）
   const rows = filteredRows.map((r) => {
     const usdFromSheet = toNumber(r["ME Buy-in(USD)"]);
     if (usdFromSheet != null) {
