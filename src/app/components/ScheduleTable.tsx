@@ -70,7 +70,7 @@ export default function ScheduleTable({ rows }: { rows: Row[] }) {
     });
   }, [rows, locationPick, tournamentQuery]);
 
-  const igUrl = "https://www.instagram.com/asmallbean/"; // 你要換 IG 就改這裡
+  const igUrl = "https://www.instagram.com/a.smallbean_poker"; // 你要換 IG 就改這裡
 
   return (
     <div style={{ marginTop: 16 }}>
