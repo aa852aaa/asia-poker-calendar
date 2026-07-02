@@ -250,7 +250,6 @@ export default function ScheduleTable({ rows }: { rows: Row[] }) {
           IG
         </a>
       </div>
-\
     </div>
   );
 }
