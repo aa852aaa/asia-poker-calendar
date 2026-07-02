@@ -1,0 +1,18 @@
+[
+  {
+    "name": "SoMuchPoker Asia Calendar",
+    "url": "https://somuchpoker.com/poker-calendar/{YEAR}",
+    "note": "亞太區彙整月曆，每日更新"
+  },
+  {
+    "name": "PokerCalendar.asia",
+    "url": "https://pokercalendar.asia/en/poker-events/list/",
+    "note": "亞洲專門賽程站（list 檢視，跨月列出未來賽事）"
+  },
+  {
+    "name": "Hendon Mob Festivals (Rest of World)",
+    "url": "https://pokerdb.thehendonmob.com/festival.php?a=l&y={YEAR}&m=all&c=4",
+    "enabled": false,
+    "note": "Cloudflare 擋一般抓取，Phase 2 再用 Playwright 處理"
+  }
+]

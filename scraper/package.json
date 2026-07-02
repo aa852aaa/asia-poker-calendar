@@ -1,0 +1,14 @@
+{
+  "name": "asia-poker-calendar-scraper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AI 自動抓賽程：來源網站 → Gemini 抽取 → 寫入 Google Sheet",
+  "scripts": {
+    "scrape": "node index.mjs",
+    "test-fetch": "node index.mjs --test-fetch"
+  },
+  "dependencies": {
+    "google-auth-library": "^9.15.0"
+  }
+}

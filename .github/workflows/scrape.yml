@@ -1,0 +1,35 @@
+name: AI 抓賽程
+
+on:
+  schedule:
+    - cron: "0 1 * * 1" # 每週一 01:00 UTC = 台北時間 09:00
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "試跑（只印結果，不寫入 Sheet）"
+        type: boolean
+        default: true
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 安裝套件
+        run: npm ci
+        working-directory: scraper
+
+      - name: 執行爬蟲
+        run: node index.mjs
+        working-directory: scraper
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          SHEET_TAB: ${{ secrets.SHEET_TAB }}
+          DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '1' || '0' }}
