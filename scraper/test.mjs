@@ -54,18 +54,25 @@ eq("主辦官網保留", cleanLink("https://godsofpoker.com/series/taipei-2026-i
   "https://godsofpoker.com/series/taipei-2026-ii");
 eq("非 http 開頭丟棄", cleanLink("/series/x", blacklist), "");
 
-console.log("\n【3】PCA JSON 解析（用真實 API 回應）");
-const pcaRaw = JSON.parse(await readFile("../.scraper-test/T3_PokerCalendar_asia_API.txt", "utf8"));
+console.log("\n【3】PCA JSON 解析（樣本取自真實 API 回應，涵蓋各種髒資料情境）");
+// 路徑以測試檔自己的位置為準，不受 cwd 影響；樣本檔進 repo，不依賴 .scraper-test/ 那種本機產物
+const pcaRaw = JSON.parse(await readFile(new URL("./fixtures/pca-sample.json", import.meta.url), "utf8"));
 const parsed = parseTribeEvents(pcaRaw, blacklist);
-ok(`解析出 ${parsed.length} 筆`, parsed.length > 20);
+const byTitle = (kw) => parsed.find((e) => e.tournament.includes(kw));
+eq("解析出 6 筆", parsed.length, 6);
 ok("沒有任何一筆的連結指向彙整站", parsed.every((e) => !blacklist.test(e.detail_url || "x_none")));
-ok("日期是 YYYY-MM-DD", parsed.every((e) => /^\d{4}-\d{2}-\d{2}$/.test(e.start_date)));
-ok("Korea, Republic of 已正規化成 South Korea",
-  !parsed.some((e) => /Korea, Republic of/.test(e.location)) &&
-  parsed.some((e) => /South Korea/.test(e.location)));
-ok("Viet Nam 已正規化成 Vietnam",
-  !parsed.some((e) => /Viet Nam/.test(e.location)) && parsed.some((e) => /Vietnam/.test(e.location)));
+eq("主辦與場館都是彙整站 → 連結清成空字串", byTitle("Blacklist Probe")?.detail_url, "");
+ok("日期轉成 YYYY-MM-DD", parsed.every((e) => /^\d{4}-\d{2}-\d{2}$/.test(e.start_date)));
+eq('Korea, Republic of → South Korea，且 "Jeju,Korea" 城市正規化',
+  byTitle("APT Jeju")?.location, "Jeju, South Korea");
+eq("Viet Nam → Vietnam，且 Hà Nội → Hanoi", byTitle("RPT Championship")?.location, "Hanoi, Vietnam");
 ok("HTML 編碼已還原（沒有殘留 &#8211;）", !parsed.some((e) => /&#\d+;/.test(e.tournament)));
+eq("標題的 &#8211; 變成連字號", byTitle("Trial of Wisdom")?.tournament,
+  "The Trial of Wisdom - GOP Taipei 2026 II");
+eq("有主辦官網 → 用主辦的", byTitle("APT Jeju")?.detail_url, "http://www.theasianpokertour.com/");
+eq("沒有主辦官網 → 退回場館官網", byTitle("Manila Super Series")?.detail_url, "http://www.okadamanila.com/");
+eq("主辦和場館都沒有 → 留空", byTitle("Poker Dream 26")?.detail_url, "");
+eq("只有國家沒城市時 location 只填國家", byTitle("Poker Dream 26")?.location, "Malaysia");
 
 console.log("\n【4】三層優先序合併：每個欄位取 tier 最小且有值的來源");
 const cands = [

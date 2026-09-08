@@ -1,0 +1,107 @@
+{
+ "events": [
+  {
+   "title": "APT Jeju 2026",
+   "start_date": "2026-09-25 00:00:00",
+   "end_date": "2026-10-04 23:59:59",
+   "url": "https://pokercalendar.asia/en/pokertournaments/apt-jeju-2026/",
+   "organizer": [
+    {
+     "organizer": "APT",
+     "website": "http://www.theasianpokertour.com/"
+    }
+   ],
+   "venue": {
+    "venue": "Jeju Shinhwa World",
+    "city": "Jeju,Korea",
+    "country": "Korea, Republic of",
+    "website": "https://www.shinhwaworld.com/?url_lang=en_US"
+   }
+  },
+  {
+   "title": "RPT Championship IV 2026",
+   "start_date": "2026-09-11 00:00:00",
+   "end_date": "2026-09-22 23:59:59",
+   "url": "https://pokercalendar.asia/en/pokertournaments/rpt-championship-iv-2026/",
+   "organizer": [
+    {
+     "organizer": "Royal Poker Club",
+     "website": "https://royalpokerclub.vn/"
+    }
+   ],
+   "venue": {
+    "venue": "Royal Poker Club",
+    "city": "Hà Nội",
+    "country": "Viet Nam",
+    "website": "https://royalpokerclub.vn/"
+   }
+  },
+  {
+   "title": "The Trial of Wisdom &#8211; GOP Taipei 2026 II",
+   "start_date": "2026-09-18 00:00:00",
+   "end_date": "2026-09-27 23:59:59",
+   "url": "https://pokercalendar.asia/en/pokertournaments/the-trial-of-wisdom-gop-taipei-2026-ii/",
+   "organizer": [
+    {
+     "organizer": "Gods of Poker",
+     "website": "https://godsofpoker.com/"
+    }
+   ],
+   "venue": {
+    "venue": "Asia Poker Arena",
+    "city": "Taipei",
+    "country": "Taiwan"
+   }
+  },
+  {
+   "title": "Manila Super Series 24",
+   "start_date": "2026-09-18 00:00:00",
+   "end_date": "2026-09-27 23:59:59",
+   "url": "https://pokercalendar.asia/en/pokertournaments/manila-super-series-24/",
+   "organizer": [
+    {
+     "organizer": "Pokerstars Live"
+    }
+   ],
+   "venue": {
+    "venue": "Okada Manila",
+    "city": "Manila",
+    "country": "Philippines",
+    "website": "http://www.okadamanila.com/"
+   }
+  },
+  {
+   "title": "Poker Dream 26 Malaysia",
+   "start_date": "2026-10-08 00:00:00",
+   "end_date": "2026-10-19 23:59:59",
+   "url": "https://pokercalendar.asia/en/pokertournaments/poker-dream-24/",
+   "organizer": [
+    {
+     "organizer": "Poker Dream"
+    }
+   ],
+   "venue": {
+    "venue": "Genting Highlands",
+    "country": "Malaysia"
+   }
+  },
+  {
+   "title": "Blacklist Probe 2026",
+   "start_date": "2026-11-01 00:00:00",
+   "end_date": "2026-11-05 23:59:59",
+   "url": "https://pokercalendar.asia/en/pokertournaments/probe/",
+   "organizer": [
+    {
+     "organizer": "Probe",
+     "website": "https://somuchpoker.com/events-calendar/probe"
+    }
+   ],
+   "venue": {
+    "venue": "Probe Room",
+    "city": "Taipei",
+    "country": "Taiwan",
+    "website": "https://pokercalendar.asia/venue/probe/"
+   }
+  }
+ ]
+}
