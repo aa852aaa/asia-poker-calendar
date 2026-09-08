@@ -32,6 +32,8 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 const MAX_NEW_PER_SOURCE = 30; // 單一來源單次最多抽出筆數（防 LLM 幻覺灌爆表格）
 const MAX_APPEND_TOTAL = 60; // 單次執行寫入總上限
 const MAX_DATE_SHIFT_DAYS = 45; // 改期偵測：日期差超過這個天數就不當成同一場的改期，只報不改
+const MAX_DETAIL_CALLS = 20; // 單輪最多抓幾個詳情頁補買入（守住 Gemini 免費額度）
+const LONG_FESTIVAL_DAYS = 21; // 超過這個天數就在預覽標 ⚠️ 提醒人看一眼（不擋，只提醒）
 const PAGE_TEXT_LIMIT = 350_000; // 餵給 LLM 的每頁文字上限（字元）
 const GEMINI_CALL_GAP_MS = 7_000; // 免費額度 10 RPM，兩次呼叫間隔 7 秒
 const HIDE_ENDED_AFTER_DAYS = 3; // 與網站一致：結束超過 3 天的不收
@@ -232,8 +234,19 @@ export function pickReplacementModel(errorText, currentModel) {
 // 遇到就自動換過去並記在 log——不必等人改 code 才能恢復。
 // （2026-09-08 那次 gemini-2.5-flash 下架，15 個來源有 14 個一次全掛就是這樣來的）
 let geminiModel = GEMINI_MODEL;
+// 每日額度用完後，這輪剩下的呼叫直接放棄，不要每一筆都再空轉重試一次
+// （上一輪就是這樣，每筆失敗要等 2 分鐘，整輪多花好幾分鐘還是拿不到東西）
+let dailyQuotaGone = false;
+
+// 429 分兩種：每分鐘上限（等一下就會恢復）和每日上限（今天不用再試了）。
+// Google 會在錯誤內容裡寫是哪一種，看不出來時當成每分鐘、還可以再等。
+export function isDailyQuotaError(raw) {
+  return /per\s*day|perday|daily/i.test(String(raw));
+}
 
 async function geminiJSON(prompt, schema) {
+  if (dailyQuotaGone) throw new Error("Gemini 今日額度已用完，本輪跳過");
+
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: {
@@ -250,7 +263,17 @@ async function geminiJSON(prompt, schema) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (res.status === 429 || res.status >= 500) {
+    if (res.status === 429) {
+      const raw = await res.text();
+      if (isDailyQuotaError(raw) || attempt >= 2) {
+        dailyQuotaGone = true;
+        throw new Error("Gemini 額度已用完（429），本輪後續呼叫全部跳過");
+      }
+      console.warn(`Gemini 429（每分鐘上限），等 60 秒後再試一次...`);
+      await sleep(60_000);
+      continue;
+    }
+    if (res.status >= 500) {
       console.warn(`Gemini ${res.status}，第 ${attempt} 次重試前等 30 秒...`);
       await sleep(30_000);
       continue;
@@ -331,6 +354,9 @@ function listingPrompt(sourceName, today, text) {
 - location 用英文「City, Country」格式，例如 "Taipei, Taiwan"、"Jeju, South Korea"。頁面上只有國家沒有城市時就只填國家。
 - detail_url 填該系列詳情頁的完整網址（從 [link:...] 取），找不到就填空字串。
 - 找不到的欄位填空字串，不要編造。頁面上沒有日期的系列就不要輸出。
+- tournament 要能「單獨看懂」。列表上如果只寫短標題（例如「2026 Sapporo #02」），請從頁面標題或
+  網站名稱找出所屬的巡迴賽／系列名稱補在前面（變成「JOPT 2026 Sapporo #02」）。
+  這個名稱會單獨顯示在賽程表上，旁邊沒有任何說明。
 
 頁面內容：
 ${text}`;
@@ -520,6 +546,21 @@ async function loadSources() {
   return { sources: out, blacklist };
 }
 
+export function festivalDays(ev) {
+  const s = parseYMD(ev["Start Date"]);
+  const e = parseYMD(ev["End Date"]);
+  return s == null || e == null ? 0 : Math.round((e - s) / 86400_000) + 1;
+}
+
+// 有些主辦站的列表只寫「2026 Sapporo #02」，品牌名放在頁面別處，抽出來的名稱單獨看不懂
+// （放到網站上會變成一列「2026 Sapporo #02」）。來源設了 brand 就在缺品牌時補在前面。
+export function applyBrand(name, brand) {
+  const n = String(name ?? "").trim();
+  if (!brand || !n) return n;
+  const has = new RegExp(`(^|[^a-z0-9])${brand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i");
+  return has.test(n) ? n : `${brand} ${n}`;
+}
+
 // 彙整站的連結不能用（會讓網站上的連結指回別人家）
 export function cleanLink(url, blacklist) {
   const u = String(url ?? "").trim();
@@ -684,7 +725,7 @@ async function main() {
         "Start Date": String(ev.start_date ?? "").trim(),
         "End Date": String(ev.end_date ?? "").trim() || String(ev.start_date ?? "").trim(),
         "Location": String(ev.location ?? "").trim(),
-        "Tournament": String(ev.tournament ?? "").trim(),
+        "Tournament": applyBrand(ev.tournament, src.brand),
         "ME Buy-in": "",
         "Currency": "",
         "Handbook URL": cleanLink(ev.detail_url, blacklist),
@@ -753,15 +794,26 @@ async function main() {
   }
 
   // ── 第 3 段：抓官網詳情頁補買入金額與專屬連結 ──
+  // 這段是加值，不是必要：抓不到就讓買入留白，絕不影響前面已經確定的賽事資料。
   if (toAppend.length) {
     console.log(`\n=== 補買入金額與原生連結（${toAppend.length} 筆）===`);
+    let detailCalls = 0;
     for (const ev of toAppend) {
       const entry = ev["Handbook URL"];
       if (!entry) continue;
+      if (dailyQuotaGone) {
+        console.warn("  Gemini 額度已用完，其餘的買入金額全部留白（賽事本身照樣寫入）");
+        break;
+      }
+      if (detailCalls >= MAX_DETAIL_CALLS) {
+        console.warn(`  已達單輪詳情頁上限 ${MAX_DETAIL_CALLS} 筆，其餘的買入金額留白`);
+        break;
+      }
       try {
         const text = htmlToText(await fetchPage(entry), entry);
         if (text.length < 300) continue;
         await sleep(GEMINI_CALL_GAP_MS);
+        detailCalls++;
         const d = await geminiJSON(detailPrompt(ev.Tournament, text), DETAIL_SCHEMA);
 
         const buyin = Number(d?.me_buyin);
@@ -791,11 +843,19 @@ async function main() {
   }
 
   console.log(`\n=== 準備寫入 ${toAppend.length} 筆 ===`);
+  const longOnes = toAppend.filter((ev) => festivalDays(ev) > LONG_FESTIVAL_DAYS);
   for (const ev of toAppend) {
+    const mark = festivalDays(ev) > LONG_FESTIVAL_DAYS ? "⚠️" : " ";
     console.log(
-      `  ${ev["Start Date"]} ~ ${ev["End Date"]} | ${ev.Location} | ${ev.Tournament} | ` +
+      `${mark} ${ev["Start Date"]} ~ ${ev["End Date"]} | ${ev.Location} | ${ev.Tournament} | ` +
         `${ev.Currency} ${ev["ME Buy-in"] || "-"} | ${ev["Handbook URL"] || "（連結留空）"}` +
         `  [${(srcNote.get(ev) ?? []).join(",")}]`,
+    );
+  }
+  if (longOnes.length) {
+    console.log(
+      `\n⚠️ 上面標記的 ${longOnes.length} 場賽期超過 ${LONG_FESTIVAL_DAYS} 天，可能是來源網站的月曆被誤讀成賽期，` +
+        `建議進 Sheet 看一眼：${longOnes.map((e) => e.Tournament).join("、")}`,
     );
   }
 

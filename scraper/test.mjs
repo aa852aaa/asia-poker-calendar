@@ -6,6 +6,7 @@ import {
   passesGeoRule, isAsia, isNonAsiaAllowed, cleanLink, parseTribeEvents,
   mergeGroup, detectDateChange, validateEvent, colLetter, htmlToText,
   fixCountry, fixCity, isDuplicateConservative, pickReplacementModel,
+  applyBrand, festivalDays, isDailyQuotaError,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -149,6 +150,26 @@ eq("從真實的 404 訊息挑出接替模型", pickReplacementModel(real404, "g
 eq("訊息裡只提到自己 → 回 null（不會無限重試）",
   pickReplacementModel("models/gemini-3.6-flash not found", "gemini-3.6-flash"), null);
 eq("訊息裡沒有模型名稱 → 回 null", pickReplacementModel("Not Found", "gemini-3.6-flash"), null);
+
+console.log("\n【11】賽事名稱補品牌（JOPT 官網的卡片只寫「2026 Sapporo #02」）");
+eq("名稱缺品牌 → 補在前面", applyBrand("2026 Sapporo #02", "JOPT"), "JOPT 2026 Sapporo #02");
+eq("名稱已經有品牌 → 不重複加", applyBrand("JOPT 2027 Tokyo #01", "JOPT"), "JOPT 2027 Tokyo #01");
+eq("品牌比對不分大小寫", applyBrand("jopt 2026 Osaka", "JOPT"), "jopt 2026 Osaka");
+eq("來源沒設 brand → 原封不動", applyBrand("Manila Super Series 24", undefined), "Manila Super Series 24");
+eq("品牌只是別的字的一部分 → 還是要補",
+  applyBrand("Joptimism Cup", "JOPT"), "JOPT Joptimism Cup");
+
+console.log("\n【12】賽期天數（過長的要在預覽標記提醒）");
+eq("同一天 = 1 天", festivalDays({ "Start Date": "2026-10-01", "End Date": "2026-10-01" }), 1);
+eq("10/01~10/30 = 30 天", festivalDays({ "Start Date": "2026-10-01", "End Date": "2026-10-30" }), 30);
+eq("日期壞掉 → 0（不會誤標）", festivalDays({ "Start Date": "x", "End Date": "y" }), 0);
+
+console.log("\n【13】Gemini 429：每分鐘上限可以等，每日上限不用等");
+ok("訊息提到 PerDay → 判定為每日額度用完",
+  isDailyQuotaError('{"message":"Quota exceeded for GenerateRequestsPerDayPerProjectPerModel"}'));
+ok("訊息提到 PerMinute → 不是每日額度（還可以再等）",
+  !isDailyQuotaError('{"message":"Quota exceeded for GenerateRequestsPerMinutePerProjectPerModel"}'));
+ok("看不出是哪一種 → 當成每分鐘（保守，還會再試一次）", !isDailyQuotaError("Too Many Requests"));
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);

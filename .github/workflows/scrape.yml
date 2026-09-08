@@ -12,7 +12,7 @@ on:
       update_dates:
         description: "改期時自動更新既有列的日期（不勾＝只在 log 通知）"
         type: boolean
-        default: false
+        default: true
 
 jobs:
   scrape:
@@ -43,5 +43,6 @@ jobs:
           # 選填：想指定 Gemini 模型就加這個 secret，不設就用程式裡的預設
           GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
           DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '1' || '0' }}
-          # 排程執行時是否自動更新改期：改這裡的 '0' → '1' 就會開啟
-          UPDATE_DATES: ${{ github.event_name == 'workflow_dispatch' && inputs.update_dates && '1' || '0' }}
+          # 排程執行一律開啟改期自動更新；手動觸發時看上面的勾選。
+          # 要關掉排程的自動更新，把下面的 'workflow_dispatch' 判斷式整段換成 '0' 即可。
+          UPDATE_DATES: ${{ (github.event_name != 'workflow_dispatch' || inputs.update_dates) && '1' || '0' }}
