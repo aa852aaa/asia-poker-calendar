@@ -27,7 +27,8 @@ const DRY_RUN = process.env.DRY_RUN === "1";
 const UPDATE_DATES = process.env.UPDATE_DATES === "1";
 const TEST_FETCH = process.argv.includes("--test-fetch");
 
-const GEMINI_MODEL = "gemini-2.5-flash";
+// 想換模型不必改 code：在 GitHub Secrets 或環境變數設 GEMINI_MODEL 即可
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 const MAX_NEW_PER_SOURCE = 30; // 單一來源單次最多抽出筆數（防 LLM 幻覺灌爆表格）
 const MAX_APPEND_TOTAL = 60; // 單次執行寫入總上限
 const MAX_DATE_SHIFT_DAYS = 45; // 改期偵測：日期差超過這個天數就不當成同一場的改期，只報不改
@@ -218,8 +219,21 @@ export function htmlToText(html, baseUrl) {
 
 // ---------- Gemini ----------
 
+// 從 404 錯誤訊息裡找 Google 建議的接替模型。訊息長這樣：
+//   "This model models/gemini-2.5-flash is no longer available to new users.
+//    Please update your code to use models/gemini-3.6-flash ..."
+// 取第一個和目前不同的 models/xxx。找不到就回 null（交給呼叫端丟錯）。
+export function pickReplacementModel(errorText, currentModel) {
+  const names = [...String(errorText).matchAll(/models\/([a-z0-9][a-z0-9.\-]*)/gi)].map((m) => m[1]);
+  return names.find((n) => n !== currentModel) ?? null;
+}
+
+// 目前使用的模型。Google 下架舊模型時，404 的錯誤訊息會指名接替的模型，
+// 遇到就自動換過去並記在 log——不必等人改 code 才能恢復。
+// （2026-09-08 那次 gemini-2.5-flash 下架，15 個來源有 14 個一次全掛就是這樣來的）
+let geminiModel = GEMINI_MODEL;
+
 async function geminiJSON(prompt, schema) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: {
@@ -229,7 +243,8 @@ async function geminiJSON(prompt, schema) {
     },
   };
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${GEMINI_API_KEY}`;
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -239,6 +254,16 @@ async function geminiJSON(prompt, schema) {
       console.warn(`Gemini ${res.status}，第 ${attempt} 次重試前等 30 秒...`);
       await sleep(30_000);
       continue;
+    }
+    if (res.status === 404) {
+      const raw = await res.text();
+      const next = pickReplacementModel(raw, geminiModel);
+      if (next) {
+        console.warn(`⚠️ 模型 ${geminiModel} 已無法使用，依 Google 的建議自動改用 ${next}`);
+        geminiModel = next;
+        continue;
+      }
+      throw new Error(`Gemini HTTP 404: ${raw.slice(0, 300)}`);
     }
     if (!res.ok) throw new Error(`Gemini HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const data = await res.json();

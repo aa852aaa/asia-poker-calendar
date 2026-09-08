@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import {
   passesGeoRule, isAsia, isNonAsiaAllowed, cleanLink, parseTribeEvents,
   mergeGroup, detectDateChange, validateEvent, colLetter, htmlToText,
-  fixCountry, fixCity, isDuplicateConservative,
+  fixCountry, fixCity, isDuplicateConservative, pickReplacementModel,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -140,6 +140,15 @@ ok("日期完全不重疊 → 不是重複",
   !isDuplicateConservative({ Tournament: "HPC", "Start Date": "2026-12-01", "End Date": "2026-12-05" }, sheet));
 ok("同名同日期 → 是重複",
   isDuplicateConservative({ Tournament: "HPC", "Start Date": "2026-09-30", "End Date": "2026-10-04" }, sheet));
+
+console.log("\n【10】模型下架時自動換模型（2026-09-08 真的發生過）");
+const real404 = JSON.stringify({ error: { code: 404,
+  message: "This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements.",
+  status: "NOT_FOUND" } });
+eq("從真實的 404 訊息挑出接替模型", pickReplacementModel(real404, "gemini-2.5-flash"), "gemini-3.6-flash");
+eq("訊息裡只提到自己 → 回 null（不會無限重試）",
+  pickReplacementModel("models/gemini-3.6-flash not found", "gemini-3.6-flash"), null);
+eq("訊息裡沒有模型名稱 → 回 null", pickReplacementModel("Not Found", "gemini-3.6-flash"), null);
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);

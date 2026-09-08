@@ -40,6 +40,8 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
           SHEET_TAB: ${{ secrets.SHEET_TAB }}
+          # 選填：想指定 Gemini 模型就加這個 secret，不設就用程式裡的預設
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
           DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '1' || '0' }}
           # 排程執行時是否自動更新改期：改這裡的 '0' → '1' 就會開啟
           UPDATE_DATES: ${{ github.event_name == 'workflow_dispatch' && inputs.update_dates && '1' || '0' }}
