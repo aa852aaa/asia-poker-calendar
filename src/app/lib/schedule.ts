@@ -4,6 +4,27 @@ import { Row, toNumber } from "./types";
 // ====== 過濾「已結束超過 N 天」 ======
 const HIDE_ENDED_AFTER_DAYS = 3;
 
+// ====== 非台灣賽事的買入門檻 ======
+// 台灣（台北）的賽事一律顯示；其他地區只顯示主賽事買入達到門檻的，濾掉小型賽事。
+const MIN_USD_OUTSIDE_TAIWAN = 500;
+
+// 買入金額不明時要不要顯示。不明的情況有兩種：表格那格是空的，或匯率 API 掛掉導致換算不出來。
+// true  = 顯示（只擋「確定低於門檻」的；抓不到資料不等於賽事很小，匯率掛掉更不該讓整個表消失）
+// false = 隱藏（表格會乾淨很多，但沒填買入的大型賽事也會跟著不見）
+const SHOW_WHEN_BUYIN_UNKNOWN = true;
+
+// Location 欄是人工填的，格式像「台灣 台北 / Taipei, Taiwan」，中英文都可能出現
+export function isLocalTaiwan(location: string | undefined): boolean {
+  return /taiwan|taipei|台灣|台北/i.test(String(location ?? ""));
+}
+
+// 這一列該不該出現在網站上
+export function passesBuyInFloor(row: Row): boolean {
+  if (isLocalTaiwan(row["Location"])) return true;
+  if (row.usd == null) return SHOW_WHEN_BUYIN_UNKNOWN;
+  return row.usd >= MIN_USD_OUTSIDE_TAIWAN;
+}
+
 // 支援 YYYY-MM-DD / YYYY/MM/DD / YYYY-M-D / YYYY/M/D，固定當台北時區 00:00
 export function parseYMDToTaipeiDate(dateStr: string): Date | null {
   const s = String(dateStr ?? "").trim();
@@ -88,7 +109,7 @@ export async function getScheduleRows(): Promise<Row[]> {
   }
 
   // 計算 USD（若表格已填 ME Buy-in(USD)，就優先用它；否則自算）
-  return filteredRows.map((r) => {
+  const withUsd = filteredRows.map((r) => {
     const usdFromSheet = toNumber(r["ME Buy-in(USD)"]);
     if (usdFromSheet != null) {
       return { ...r, usd: usdFromSheet };
@@ -100,4 +121,8 @@ export async function getScheduleRows(): Promise<Row[]> {
     const usd = convertToUSD(amount, r["Currency"], rates);
     return { ...r, usd };
   });
+
+  // 買入門檻要在換算 USD 之後才能判斷，所以放在最後
+  // （在這裡過濾而不是在畫面上，濾掉的資料就不會傳到瀏覽器，地區下拉選單也不會列出空的地區）
+  return withUsd.filter(passesBuyInFloor);
 }

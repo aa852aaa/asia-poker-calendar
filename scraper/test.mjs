@@ -74,6 +74,8 @@ eq("有主辦官網 → 用主辦的", byTitle("APT Jeju")?.detail_url, "http://
 eq("沒有主辦官網 → 退回場館官網", byTitle("Manila Super Series")?.detail_url, "http://www.okadamanila.com/");
 eq("主辦和場館都沒有 → 留空", byTitle("Poker Dream 26")?.detail_url, "");
 eq("只有國家沒城市時 location 只填國家", byTitle("Poker Dream 26")?.location, "Malaysia");
+eq("城市正規化：Hạ Long → Ha Long", fixCity("Hạ Long"), "Ha Long");
+eq("沒對照表的城市原樣保留", fixCity("Sapporo"), "Sapporo");
 
 console.log("\n【4】三層優先序合併：每個欄位取 tier 最小且有值的來源");
 const cands = [
