@@ -267,6 +267,8 @@ async function geminiJSON(prompt, schema) {
       const raw = await res.text();
       if (isDailyQuotaError(raw) || attempt >= 2) {
         dailyQuotaGone = true;
+        // 把 Google 回的原文留在 log 裡：才看得出撞到的是哪一個上限、額度多少
+        console.warn(`  Gemini 額度訊息原文：${raw.replace(/\s+/g, " ").slice(0, 500)}`);
         throw new Error("Gemini 額度已用完（429），本輪後續呼叫全部跳過");
       }
       console.warn(`Gemini 429（每分鐘上限），等 60 秒後再試一次...`);
