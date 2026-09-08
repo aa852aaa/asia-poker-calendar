@@ -1,18 +1,37 @@
-[
-  {
-    "name": "SoMuchPoker Asia Calendar",
-    "url": "https://somuchpoker.com/poker-calendar/{YEAR}",
-    "note": "亞太區彙整月曆，每日更新"
-  },
-  {
-    "name": "PokerCalendar.asia",
-    "url": "https://pokercalendar.asia/en/poker-events/list/",
-    "note": "亞洲專門賽程站（list 檢視，跨月列出未來賽事）"
-  },
-  {
-    "name": "Hendon Mob Festivals (Rest of World)",
-    "url": "https://pokerdb.thehendonmob.com/festival.php?a=l&y={YEAR}&m=all&c=4",
-    "enabled": false,
-    "note": "Cloudflare 擋一般抓取，Phase 2 再用 Playwright 處理"
-  }
-]
+{
+  "_說明": "tier 1=主辦賽事方 2=場館方 3=彙整站。數字小的優先：同一場賽事，每個欄位取 tier 最小且有值的來源。type: html=抓網頁交給 LLM 抽取 / json=直接解析結構化 API（不用 LLM）。enabled:false = 暫不啟用。",
+  "sources": [
+    { "tier": 1, "name": "APT Asian Poker Tour", "type": "html", "url": "https://www.theasianpokertour.com/series" },
+    { "tier": 1, "name": "GOP Gods of Poker", "type": "html", "url": "https://godsofpoker.com/series" },
+    { "tier": 1, "name": "ZSOP Zodiac Series of Poker", "type": "html", "url": "https://zodiacseriesofpoker.com/series" },
+    { "tier": 1, "name": "AJPC Samurai Circuit", "type": "html", "url": "https://samurai.ajpc.jp/en/" },
+    { "tier": 1, "name": "JOPT Japan Open Poker Tour", "type": "html", "url": "https://japanopenpoker.com/" },
+    { "tier": 1, "name": "OLA Poker Tour", "type": "html", "url": "https://olapokertour.com/" },
+    { "tier": 1, "name": "PSC Players Series", "type": "html", "url": "https://www.playersseries.com/series" },
+    { "tier": 1, "name": "WPG World Poker Games", "type": "html", "url": "https://wpg.poker/events/" },
+    { "tier": 1, "name": "APL Ace Poker League", "type": "html", "url": "https://acepokerleague.com/" },
+    { "tier": 1, "name": "APPT PokerStars Live", "type": "html", "url": "https://www.pokerstarslive.com/appt/" },
+    { "tier": 1, "name": "P1 Circuit", "type": "html", "url": "https://p1-circuit.one/" },
+    { "tier": 1, "name": "RDPT Red Dragon", "type": "html", "url": "https://playreddragon.com/series-schedule.html",
+      "note": "賽事名在 img alt，列表頁沒有日期，日期靠 tier 3 補" },
+
+    { "tier": 2, "name": "CTP Club 台北", "type": "html", "url": "https://ctpclub.app/festivals" },
+
+    { "tier": 3, "name": "PokerCalendar.asia API", "type": "json",
+      "url": "https://pokercalendar.asia/wp-json/tribe/events/v1/events?per_page=100&start_date={TODAY}&end_date={TODAY+18M}" },
+    { "tier": 3, "name": "SoMuchPoker Calendar", "type": "html", "url": "https://somuchpoker.com/poker-calendar/{YEAR}" },
+
+    { "tier": 1, "name": "KPC Korea Poker Cup", "type": "html", "url": "https://www.kpcpoker.com/?lang=en",
+      "enabled": false, "note": "內容 JS 渲染，純 fetch 只拿到導覽列。要 Playwright（Phase 2）" },
+    { "tier": 1, "name": "Triton Poker Series", "type": "html", "url": "https://tritonpokerseries.com/en-US/events",
+      "enabled": false, "note": "內容 JS 渲染。要 Playwright（Phase 2）；且只收亞洲站" },
+    { "tier": 1, "name": "HPC Harbour Poker Cup", "type": "html", "url": "https://hpc.poker/",
+      "enabled": false, "note": "只有 Logo 和 PDF，日期靠 CTP（tier 2）比較準" }
+  ],
+
+  "_黑名單說明": "彙整站網域。從任何來源抽到的連結只要落在這裡就丟棄，絕不寫進 Handbook URL——避免網站上的連結指回別人的彙整站。",
+  "linkBlacklist": [
+    "pokercalendar.asia", "somuchpoker.com", "pokernews.com", "thehendonmob.com",
+    "cardplayer.com", "pokerfuse.com", "globalpokerindex.com", "jopt.jp"
+  ]
+}

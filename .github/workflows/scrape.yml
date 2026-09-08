@@ -9,6 +9,10 @@ on:
         description: "試跑（只印結果，不寫入 Sheet）"
         type: boolean
         default: true
+      update_dates:
+        description: "改期時自動更新既有列的日期（不勾＝只在 log 通知）"
+        type: boolean
+        default: false
 
 jobs:
   scrape:
@@ -24,6 +28,10 @@ jobs:
         run: npm ci
         working-directory: scraper
 
+      - name: 純邏輯測試
+        run: node test.mjs
+        working-directory: scraper
+
       - name: 執行爬蟲
         run: node index.mjs
         working-directory: scraper
@@ -33,3 +41,5 @@ jobs:
           SHEET_ID: ${{ secrets.SHEET_ID }}
           SHEET_TAB: ${{ secrets.SHEET_TAB }}
           DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '1' || '0' }}
+          # 排程執行時是否自動更新改期：改這裡的 '0' → '1' 就會開啟
+          UPDATE_DATES: ${{ github.event_name == 'workflow_dispatch' && inputs.update_dates && '1' || '0' }}

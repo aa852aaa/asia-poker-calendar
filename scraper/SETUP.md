@@ -4,6 +4,34 @@
 
 爬蟲永遠**只新增、不修改、不刪除**任何現有資料。單次最多寫入 60 筆，欄位對不上會自動中止。
 
+## 它怎麼運作（15 個來源，三層優先序）
+
+```
+Tier 1 主辦賽事方（12 個）  APT / GOP / ZSOP / AJPC / JOPT / OLA / PSC / WPG / APL / APPT / P1 / RDPT
+Tier 2 場館方（1 個）        CTP Club 台北
+Tier 3 彙整站（2 個）        PokerCalendar.asia API（結構化 JSON，不用 AI）、SoMuchPoker 年度日曆
+```
+
+同一場賽事被多個網站列到時，**每個欄位各取 tier 最小（最權威）且有值的來源**。
+例如 APT Championship 台北：日期用 APT 官網的、連結用 APT 官網的、彙整站只在官網沒寫時才補。
+
+**Handbook URL 絕不會指向彙整站**（pokercalendar.asia、somuchpoker.com 等都在黑名單裡）。
+找不到主辦方或場館的原生連結時**寧可留空**，不會拿別人家的頁面充數。
+
+## 改期偵測
+
+賽事常常「先公布一個日期、之後改期」。爬蟲每次跑都會拿主辦方（Tier 1／2）現在公布的日期，
+跟你表上的日期比對，**不一致就在執行 log 裡列出來**：
+
+```
+=== ⚠️ 偵測到 2 場日期與主辦方公布的不同 ===
+  APT JEJU 2026（第 4 列）：2026-09-25~2026-10-04 → 2026-09-25~2026-10-07  依據 T1:APT
+```
+
+預設**只通知、不修改**。要讓它自動改，在手動觸發時勾選「改期時自動更新」，
+或把 `.github/workflows/scrape.yml` 裡 `UPDATE_DATES` 那行的 `'0'` 改成 `'1'`（排程執行也會自動改）。
+自動更新時**只會動 Start Date / End Date 兩格**，其他欄位一律不碰；日期差超過 45 天視為可能不是同一場，只報不改。
+
 ---
 
 ## 你需要準備 4 個 GitHub Secrets
@@ -76,7 +104,25 @@
 直接在 Sheet 裡改掉或刪那一列即可。改過的列爬蟲不會再動它。
 
 **Q：想加新的來源網站？**
-改 `scraper/sources.json`，加一行 `{ "name": "站名", "url": "網址" }`。
+改 `scraper/sources.json` 的 `sources` 陣列，加一行：
+`{ "tier": 1, "name": "站名", "type": "html", "url": "網址" }`
+`tier` 填 1（主辦賽事方）、2（場館方）或 3（彙整站）——數字小的資料會蓋過數字大的。
+加完先跑 `node index.mjs --test-fetch` 確認抓得到（這步不需要任何金鑰）。
+
+**Q：怎麼確認改動沒把東西弄壞？**
+`cd scraper && node test.mjs`——59 項純邏輯測試，不需要金鑰也不連網。GitHub Actions 每次跑之前也會先跑一遍。
+
+**Q：地區收錄範圍？**
+**西太平洋（東亞）+ 東南亞**：台灣、日本、韓國、中國、香港、澳門、蒙古、菲律賓、越南、泰國、
+馬來西亞、新加坡、印尼、柬埔寨、寮國、緬甸、汶萊。
+
+判斷依據是**賽事舉辦地點**，不是巡迴賽名稱——WPT、EPT、Triton 只要辦在範圍內就收
+（WPT Seoul、WPT Cambodia、Triton Jeju 都收；WPT Cyprus、Triton Montenegro 不收）。
+
+範圍外唯一的例外是兩個超大型賽事：夏季 **WSOP**（拉斯維加斯）和冬季 **WSOP Paradise**（巴哈馬）。
+
+南亞（印度、斯里蘭卡）、中亞（烏茲別克）、西亞（土耳其、賽普勒斯）目前都不收。
+要調整就改 `index.mjs` 的 `ASIA_COUNTRIES`（加國名）和 `isNonAsiaAllowed()`（加例外賽事）。
 
 **Q：排程突然不跑了？**
 GitHub 規定：repo 60 天沒有任何 commit，排程會自動暫停，GitHub 會寄信通知，到 Actions 頁面按一下 re-enable 即可。
