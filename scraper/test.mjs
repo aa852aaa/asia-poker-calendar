@@ -6,7 +6,7 @@ import {
   passesGeoRule, isAsia, isNonAsiaAllowed, cleanLink, parseTribeEvents,
   mergeGroup, detectDateChange, validateEvent, colLetter, htmlToText,
   fixCountry, fixCity, isDuplicateConservative, pickReplacementModel,
-  applyBrand, festivalDays, isDailyQuotaError,
+  applyBrand, festivalDays, isDailyQuotaError, packBatches,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -172,6 +172,29 @@ ok("訊息提到 PerDay → 判定為每日額度用完",
 ok("訊息提到 PerMinute → 不是每日額度（還可以再等）",
   !isDailyQuotaError('{"message":"Quota exceeded for GenerateRequestsPerMinutePerProjectPerModel"}'));
 ok("看不出是哪一種 → 當成每分鐘（保守，還會再試一次）", !isDailyQuotaError("Too Many Requests"));
+
+console.log("\n【14】合併呼叫：把小頁面打包成幾批，省 Gemini 額度");
+const mkItem = (name, len) => ({ src: { name, tier: 1 }, text: "x".repeat(len) });
+const shape = (bs) => bs.map((b) => b.map((it) => it.src.name));
+
+eq("五個小頁面 → 一批（未達上限）",
+  shape(packBatches([1, 2, 3, 4, 5].map((n) => mkItem(`s${n}`, 1000)), 100000, 5)),
+  [["s1", "s2", "s3", "s4", "s5"]]);
+eq("六個小頁面 → 依每批數量上限切成 5+1",
+  shape(packBatches([1, 2, 3, 4, 5, 6].map((n) => mkItem(`s${n}`, 1000)), 100000, 5)),
+  [["s1", "s2", "s3", "s4", "s5"], ["s6"]]);
+eq("字數超過上限就換下一批",
+  shape(packBatches([mkItem("a", 60), mkItem("b", 60), mkItem("c", 10)], 100, 5)),
+  [["a"], ["b", "c"]]);
+eq("單一來源本身就超過上限 → 自己成一批，不會被丟掉",
+  shape(packBatches([mkItem("huge", 500), mkItem("small", 10)], 100, 5)),
+  [["huge"], ["small"]]);
+eq("沒有來源 → 空陣列（不會產生空批次）", packBatches([], 100, 5), []);
+ok("14 個真實大小的來源會壓成 3 批（原本要 14 次呼叫）",
+  packBatches(
+    [7256, 3383, 1480, 4406, 8199, 3358, 5385, 2720, 5749, 3404, 1755, 4746, 5520, 54992]
+      .map((n, i) => mkItem(`s${i}`, n)), 120000, 5,
+  ).length === 3);
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);

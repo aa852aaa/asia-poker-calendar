@@ -33,6 +33,8 @@ const MAX_NEW_PER_SOURCE = 30; // 單一來源單次最多抽出筆數（防 LLM
 const MAX_APPEND_TOTAL = 60; // 單次執行寫入總上限
 const MAX_DATE_SHIFT_DAYS = 45; // 改期偵測：日期差超過這個天數就不當成同一場的改期，只報不改
 const MAX_DETAIL_CALLS = 20; // 單輪最多抓幾個詳情頁補買入（守住 Gemini 免費額度）
+const BATCH_CHAR_LIMIT = 120_000; // 一批合併送給 LLM 的文字上限
+const BATCH_MAX_SOURCES = 5; // 一批最多幾個來源
 const LONG_FESTIVAL_DAYS = 21; // 超過這個天數就在預覽標 ⚠️ 提醒人看一眼（不擋，只提醒）
 const PAGE_TEXT_LIMIT = 350_000; // 餵給 LLM 的每頁文字上限（字元）
 const GEMINI_CALL_GAP_MS = 7_000; // 免費額度 10 RPM，兩次呼叫間隔 7 秒
@@ -304,13 +306,14 @@ const LISTING_SCHEMA = {
   items: {
     type: "OBJECT",
     properties: {
+      source_index: { type: "INTEGER", description: "這筆來自第幾個來源（0 起算）" },
       tournament: { type: "STRING" },
       start_date: { type: "STRING", description: "YYYY-MM-DD" },
       end_date: { type: "STRING", description: "YYYY-MM-DD" },
       location: { type: "STRING", description: "City, Country（英文）" },
       detail_url: { type: "STRING" },
     },
-    required: ["tournament", "start_date", "end_date", "location"],
+    required: ["source_index", "tournament", "start_date", "end_date", "location"],
   },
 };
 
@@ -337,11 +340,20 @@ const DETAIL_SCHEMA = {
   required: [],
 };
 
-function listingPrompt(sourceName, today, text) {
-  return `你是資料抽取工具。以下是撲克賽程網站「${sourceName}」列表頁的純文字。
+function listingPrompt(items, today) {
+  const multi = items.length > 1;
+  const blocks = items
+    .map((it, i) => `===== 來源 ${i}：${it.src.name} =====\n${it.text}`)
+    .join("\n\n");
+
+  return `你是資料抽取工具。以下是 ${items.length} 個撲克賽程網站列表頁的純文字${
+    multi ? "，用「===== 來源 k：名稱 =====」這行分隔" : ""
+  }。
 標記說明：[link:網址] 是該處的連結；[img:文字] 是圖片的說明文字——有些網站把賽事名稱或日期只放在圖片說明裡，要一起看。
 
 抽出所有「錦標賽系列」（festival / series，一整檔賽事節），每個系列一筆。
+每一筆都要填 source_index，標明它來自上面第幾個來源（就是那個 k，從 0 開始數）。
+不同來源的內容彼此獨立，不要混在一起，也不要把某個來源的賽事算到別的來源頭上。
 
 地區規則（一律依「賽事舉辦地點」判斷，不要依巡迴賽的名稱判斷）：
 - 要：東亞與東南亞——台灣、日本、韓國、中國、香港、澳門、蒙古、菲律賓、越南、泰國、馬來西亞、新加坡、印尼、柬埔寨、寮國、緬甸、汶萊。
@@ -361,7 +373,8 @@ function listingPrompt(sourceName, today, text) {
   這個名稱會單獨顯示在賽程表上，旁邊沒有任何說明。
 
 頁面內容：
-${text}`;
+
+${blocks}`;
 }
 
 function groupingPrompt(candidates, sheetRows) {
@@ -589,14 +602,34 @@ export function parseTribeEvents(json, blacklist) {
   });
 }
 
-async function collectFromSource(src, today, blacklist) {
+async function fetchSourceText(src) {
   const body = await fetchPage(src.url);
-  if (src.type === "json") return parseTribeEvents(JSON.parse(body), blacklist);
-
   const text = htmlToText(body, src.url);
   if (text.length < 300) throw new Error(`頁面內容太少（${text.length} 字元），可能被擋或改版`);
-  await sleep(GEMINI_CALL_GAP_MS);
-  return await geminiJSON(listingPrompt(src.name, today, text), LISTING_SCHEMA);
+  return text;
+}
+
+// 把多個網頁來源打包成幾批，一批一次 LLM 呼叫。
+// Gemini 免費額度是以「呼叫次數」計的，而 T1 那些主辦站的頁面都很小（1,500–8,000 字），
+// 一個一個送等於白白燒掉額度。合併後 15 次可以壓到 4 次左右。
+// 單一來源本身就超過上限時會自己成一批（例如 SoMuchPoker 年度日曆 55,000 字）。
+export function packBatches(items, charLimit = BATCH_CHAR_LIMIT, maxPerBatch = BATCH_MAX_SOURCES) {
+  const batches = [];
+  let cur = [];
+  let curLen = 0;
+  for (const it of items) {
+    const tooMany = cur.length >= maxPerBatch;
+    const tooLong = curLen + it.text.length > charLimit;
+    if (cur.length && (tooMany || tooLong)) {
+      batches.push(cur);
+      cur = [];
+      curLen = 0;
+    }
+    cur.push(it);
+    curLen += it.text.length;
+  }
+  if (cur.length) batches.push(cur);
+  return batches;
 }
 
 // ---------- 合併（三層優先序）----------
@@ -711,18 +744,15 @@ async function main() {
   const { headers, rows: existing } = await getSheetRows(client, tab);
   console.log(`Sheet 分頁「${tab}」現有 ${existing.length} 列\n`);
 
-  // ── 第 1 段：各來源抽取（依 tier 由小到大）──
+  // ── 第 1 段：各來源抽取 ──
   const candidates = [];
-  for (const src of sources) {
-    let events;
-    try {
-      events = await collectFromSource(src, today, blacklist);
-    } catch (e) {
-      console.error(`❌ T${src.tier} ${src.name} 失敗：${e.message}`);
-      continue; // 單一來源失敗不影響其他來源
-    }
-    let kept = 0;
-    for (const ev of (events ?? []).slice(0, MAX_NEW_PER_SOURCE)) {
+  const tally = new Map(); // src -> { raw, kept }
+
+  const addEvents = (src, events) => {
+    const t = tally.get(src) ?? { raw: 0, kept: 0 };
+    for (const ev of events ?? []) {
+      t.raw++;
+      if (t.kept >= MAX_NEW_PER_SOURCE) continue; // 單一來源上限，防 LLM 幻覺灌爆表格
       const row = {
         "Start Date": String(ev.start_date ?? "").trim(),
         "End Date": String(ev.end_date ?? "").trim() || String(ev.start_date ?? "").trim(),
@@ -736,9 +766,62 @@ async function main() {
       };
       if (validateEvent(row, todayTs)) continue;
       candidates.push(row);
-      kept++;
+      t.kept++;
     }
-    console.log(`✅ T${src.tier} ${src.name}: 抽到 ${events?.length ?? 0} 筆，通過驗證 ${kept} 筆`);
+    tally.set(src, t);
+  };
+
+  // JSON 來源（PokerCalendar.asia）：結構化資料直接解析，完全不用 LLM
+  for (const src of sources.filter((s) => s.type === "json")) {
+    try {
+      addEvents(src, parseTribeEvents(JSON.parse(await fetchPage(src.url)), blacklist));
+    } catch (e) {
+      console.error(`❌ T${src.tier} ${src.name} 失敗：${e.message}`);
+    }
+  }
+
+  // 網頁來源：先全部抓下來，再打包成幾批一起送 LLM——Gemini 免費額度是按呼叫次數算的
+  const fetched = [];
+  for (const src of sources.filter((s) => s.type === "html")) {
+    try {
+      fetched.push({ src, text: await fetchSourceText(src) });
+    } catch (e) {
+      console.error(`❌ T${src.tier} ${src.name} 抓取失敗：${e.message}`);
+    }
+  }
+  const batches = packBatches(fetched);
+  if (fetched.length) {
+    console.log(
+      `網頁來源 ${fetched.length} 個 → 併成 ${batches.length} 批送 AI（省下 ${fetched.length - batches.length} 次呼叫）`,
+    );
+  }
+
+  for (const [i, batch] of batches.entries()) {
+    const names = batch.map((b) => b.src.name).join("、");
+    try {
+      await sleep(GEMINI_CALL_GAP_MS);
+      const events = (await geminiJSON(listingPrompt(batch, today), LISTING_SCHEMA)) ?? [];
+
+      // 依 source_index 分派回各來源。標不出來的算給這批裡最不權威的（tier 數字最大）那個，
+      // 免得彙整站的資料被誤當成主辦方的、在合併時蓋掉正確值。
+      const fallback = batch.reduce((a, b) => (b.src.tier > a.src.tier ? b : a)).src;
+      const bucket = new Map(batch.map((it) => [it.src, []]));
+      let misrouted = 0;
+      for (const ev of events) {
+        const it = batch[ev?.source_index];
+        if (!it) misrouted++;
+        bucket.get(it?.src ?? fallback)?.push(ev);
+      }
+      if (misrouted) console.warn(`  ⚠️ 第 ${i + 1} 批有 ${misrouted} 筆沒標明來源，算到「${fallback.name}」`);
+      for (const [src, evs] of bucket) addEvents(src, evs);
+    } catch (e) {
+      console.error(`❌ 第 ${i + 1} 批失敗（${names}）：${e.message}`);
+    }
+  }
+
+  for (const src of sources) {
+    const t = tally.get(src);
+    if (t) console.log(`✅ T${src.tier} ${src.name}: 抽到 ${t.raw} 筆，通過驗證 ${t.kept} 筆`);
   }
 
   if (!candidates.length) {
