@@ -6,7 +6,7 @@ import {
   passesGeoRule, isAsia, isNonAsiaAllowed, cleanLink, parseTribeEvents,
   mergeGroup, detectDateChange, validateEvent, colLetter, htmlToText,
   fixCountry, fixCity, isDuplicateConservative, pickReplacementModel,
-  applyBrand, festivalDays, isDailyQuotaError, packBatches, stripCancelMark,
+  applyBrand, festivalDays, isDailyQuotaError, packBatches, stripCancelMark, findSheetRow,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -216,6 +216,23 @@ eq("空字串", stripCancelMark(""), { name: "", cancelled: false });
 ok("「Cancellation」不會被誤判成取消（只認完整的 cancelled/canceled）",
   stripCancelMark("Cancellation Policy Cup").cancelled === false);
 ok("「Cancel」單字也不會誤判", stripCancelMark("Cancel Culture Open").cancelled === false);
+
+console.log("\n【16】對回表格列：絕不能猜錯，猜錯就會改到別人的資料");
+// 2026-09-09 的真實事故：LLM 分組失敗導致 matched 是空字串，findSheetRow("") 比對到
+// 表格裡的空白列，結果第 16 列被寫進「[已取消]」。以下把這個洞釘死。
+const sheetRows = [
+  { _row: 2, Tournament: "APT JEJU 2026" },
+  { _row: 16, Tournament: "" }, // 空白列
+  { _row: 17, Tournament: "   " }, // 只有空白字元
+  { _row: 20, Tournament: "GOP Incheon 2026 II" },
+];
+eq("空字串 → null（絕不比對到空白列）", findSheetRow("", sheetRows), null);
+eq("undefined → null", findSheetRow(undefined, sheetRows), null);
+eq("只有空白 → null", findSheetRow("   ", sheetRows), null);
+eq("名稱太短 → null（寧可不改）", findSheetRow("AP", sheetRows), null);
+eq("完全相同 → 對到那一列", findSheetRow("APT JEJU 2026", sheetRows)?._row, 2);
+eq("名稱相近 → 對得到", findSheetRow("GOP Incheon 2026", sheetRows)?._row, 20);
+eq("完全對不上 → null", findSheetRow("Some Unrelated Series 2026", sheetRows), null);
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);

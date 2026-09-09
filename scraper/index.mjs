@@ -35,6 +35,9 @@ const MAX_DATE_SHIFT_DAYS = 45; // 改期偵測：日期差超過這個天數就
 const MAX_DETAIL_CALLS = 20; // 單輪最多抓幾個詳情頁補買入（守住 Gemini 免費額度）
 const BATCH_CHAR_LIMIT = 120_000; // 一批合併送給 LLM 的文字上限
 const BATCH_MAX_SOURCES = 5; // 一批最多幾個來源
+// gemini-3.6-flash 免費層實測是每日 20 次（錯誤訊息裡的 limit: 20）。
+// 抽取和去重是必要的，詳情頁補買入是加值，所以額度快用完時先犧牲詳情頁。
+const GEMINI_DAILY_BUDGET = 18;
 const LONG_FESTIVAL_DAYS = 21; // 超過這個天數就在預覽標 ⚠️ 提醒人看一眼（不擋，只提醒）
 const CANCEL_MARK = "[已取消]"; // 來源公布取消時，加在既有列的賽事名稱前面（不刪除該列）
 const PAGE_TEXT_LIMIT = 350_000; // 餵給 LLM 的每頁文字上限（字元）
@@ -240,6 +243,7 @@ let geminiModel = GEMINI_MODEL;
 // 每日額度用完後，這輪剩下的呼叫直接放棄，不要每一筆都再空轉重試一次
 // （上一輪就是這樣，每筆失敗要等 2 分鐘，整輪多花好幾分鐘還是拿不到東西）
 let dailyQuotaGone = false;
+let geminiCalls = 0; // 本輪已成功呼叫幾次，用來守住每日額度
 
 // 429 分兩種：每分鐘上限（等一下就會恢復）和每日上限（今天不用再試了）。
 // Google 會在錯誤內容裡寫是哪一種，看不出來時當成每分鐘、還可以再等。
@@ -297,6 +301,7 @@ async function geminiJSON(prompt, schema) {
     const data = await res.json();
     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) throw new Error("Gemini 回應沒有內容");
+    geminiCalls++;
     return JSON.parse(text);
   }
   throw new Error("Gemini 重試 3 次仍失敗");
@@ -719,10 +724,19 @@ export function mergeGroup(group, candidates) {
 
 // 把 LLM 給的 matched_sheet_row 對回實際那一列
 export function findSheetRow(name, sheetRows) {
-  const exact = sheetRows.filter((r) => r.Tournament === name);
+  // 名稱是空的或太短就不要猜——空字串會去比對到表格裡的空白列，然後把註記寫進那一列。
+  // （2026-09-09 真的發生過：LLM 分組失敗導致 matched 是空字串，結果第 16 列被寫進「[已取消]」）
+  const target = String(name ?? "").trim();
+  if (target.length < 3) return null;
+
+  // 表格裡的空白列同樣不能當成比對對象
+  const rows = sheetRows.filter((r) => String(r.Tournament ?? "").trim().length >= 3);
+
+  const exact = rows.filter((r) => r.Tournament.trim() === target);
   if (exact.length === 1) return exact[0];
-  const scored = sheetRows
-    .map((r) => ({ r, s: jaccard(r.Tournament, name) }))
+
+  const scored = rows
+    .map((r) => ({ r, s: jaccard(r.Tournament, target) }))
     .filter((x) => x.s >= 0.5)
     .sort((a, b) => b.s - a.s);
   return scored.length === 1 || (scored.length > 1 && scored[0].s > scored[1].s + 0.2)
@@ -906,8 +920,12 @@ async function main() {
 
     if (minCancelTier <= minActiveTier) {
       skippedCancelled++;
-      // 取消的一律不新增；已經在表上的就加註記，那一列本身不動也不刪
-      if (sheetRow && !String(sheetRow.Tournament).includes(CANCEL_MARK)) {
+      // 取消的一律不新增；已經在表上的就加註記，那一列本身不動也不刪。
+      // 三道防線：LLM 沒真的判過就不動表格、目標列必須有賽事名、同一列只寫一次。
+      const judged = g.alreadyInSheet !== null;
+      const named = sheetRow && String(sheetRow.Tournament ?? "").trim().length >= 3;
+      const done = sheetRow && cancellations.some((c) => c.row === sheetRow._row);
+      if (judged && named && !done && !String(sheetRow.Tournament).includes(CANCEL_MARK)) {
         const said = rows.find((r) => r._cancelled && r._tier === minCancelTier);
         cancellations.push({
           row: sheetRow._row,
@@ -920,8 +938,9 @@ async function main() {
     }
     if (exists) {
       skippedExisting++;
-      const chg = detectDateChange(row, sheetRow);
-      if (chg) dateChanges.push(chg);
+      // 同樣的道理：LLM 沒真的判過（走保守退路）就沒有可靠的對應列，不要去改表格
+      const chg = g.alreadyInSheet === null ? null : detectDateChange(row, sheetRow);
+      if (chg && !dateChanges.some((c) => c.row === chg.row)) dateChanges.push(chg);
       continue;
     }
     // 同批之間再擋一次，避免 LLM 分組沒抓到的重複
@@ -971,6 +990,12 @@ async function main() {
       }
       if (detailCalls >= MAX_DETAIL_CALLS) {
         console.warn(`  已達單輪詳情頁上限 ${MAX_DETAIL_CALLS} 筆，其餘的買入金額留白`);
+        break;
+      }
+      if (geminiCalls >= GEMINI_DAILY_BUDGET) {
+        console.warn(
+          `  已用掉 ${geminiCalls} 次 Gemini 呼叫（每日上限 20），停止補買入金額把額度留給下次`,
+        );
         break;
       }
       try {
