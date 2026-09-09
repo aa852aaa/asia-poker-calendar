@@ -6,7 +6,7 @@ import {
   passesGeoRule, isAsia, isNonAsiaAllowed, cleanLink, parseTribeEvents,
   mergeGroup, detectDateChange, validateEvent, colLetter, htmlToText,
   fixCountry, fixCity, isDuplicateConservative, pickReplacementModel,
-  applyBrand, festivalDays, isDailyQuotaError, packBatches,
+  applyBrand, festivalDays, isDailyQuotaError, packBatches, stripCancelMark,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -112,7 +112,13 @@ console.log("\n【6】寫入驗證");
 const todayTs = Date.parse("2026-09-09T00:00:00+08:00");
 const mk = (o) => ({ "Start Date": "2026-10-01", "End Date": "2026-10-05", Location: "Taipei, Taiwan", Tournament: "Some Poker Series", ...o });
 eq("正常的過", validateEvent(mk({}), todayTs), null);
-ok("已取消的擋掉", validateEvent(mk({ Tournament: "***CANCELLED*** Poker Dream 27" }), todayTs) === "已取消");
+// 取消的賽事要通過驗證才能留下來比對表上既有列（比對到就加註記，不刪除那一列）
+eq("標記為取消的照樣通過驗證", validateEvent(mk({ _cancelled: true }), todayTs), null);
+eq("取消的不要求地點（彙整站常常不填）",
+  validateEvent(mk({ _cancelled: true, Location: "" }), todayTs), null);
+eq("取消的不套地區規則", validateEvent(mk({ _cancelled: true, Location: "Rozvadov, Czech Republic" }), todayTs), null);
+ok("但取消的日期壞掉還是要擋",
+  validateEvent(mk({ _cancelled: true, "Start Date": "Oct 1" }), todayTs) === "日期格式不對");
 ok("結束早於開始擋掉", validateEvent(mk({ "Start Date": "2026-10-05", "End Date": "2026-10-01" }), todayTs) === "結束早於開始");
 ok("賽期超過 60 天擋掉", validateEvent(mk({ "End Date": "2027-01-30" }), todayTs) === "賽期超過 60 天（可疑）");
 ok("已結束的擋掉", validateEvent(mk({ "Start Date": "2026-08-01", "End Date": "2026-08-10" }), todayTs) === "已結束");
@@ -195,6 +201,21 @@ ok("14 個真實大小的來源會壓成 3 批（原本要 14 次呼叫）",
     [7256, 3383, 1480, 4406, 8199, 3358, 5385, 2720, 5749, 3404, 1755, 4746, 5520, 54992]
       .map((n, i) => mkItem(`s${i}`, n)), 120000, 5,
   ).length === 3);
+
+console.log("\n【15】取消偵測：拆出取消標記，名稱要留乾淨的才比對得到表上那一列");
+eq("PCA 的 ***CANCELLED*** 格式",
+  stripCancelMark("***CANCELLED*** Poker Dream 27 Jeju"),
+  { name: "Poker Dream 27 Jeju", cancelled: true });
+eq("小寫、括號在後面（空括號要一起清掉）", stripCancelMark("Super Cup Seoul 9 2026 (cancelled)"),
+  { name: "Super Cup Seoul 9 2026", cancelled: true });
+eq("中文「已取消」", stripCancelMark("已取消 - APT Taipei 2026"),
+  { name: "APT Taipei 2026", cancelled: true });
+eq("正常賽事不動它", stripCancelMark("GOP Taipei 2026 II"),
+  { name: "GOP Taipei 2026 II", cancelled: false });
+eq("空字串", stripCancelMark(""), { name: "", cancelled: false });
+ok("「Cancellation」不會被誤判成取消（只認完整的 cancelled/canceled）",
+  stripCancelMark("Cancellation Policy Cup").cancelled === false);
+ok("「Cancel」單字也不會誤判", stripCancelMark("Cancel Culture Open").cancelled === false);
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);

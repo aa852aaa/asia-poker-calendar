@@ -36,6 +36,7 @@ const MAX_DETAIL_CALLS = 20; // 單輪最多抓幾個詳情頁補買入（守住
 const BATCH_CHAR_LIMIT = 120_000; // 一批合併送給 LLM 的文字上限
 const BATCH_MAX_SOURCES = 5; // 一批最多幾個來源
 const LONG_FESTIVAL_DAYS = 21; // 超過這個天數就在預覽標 ⚠️ 提醒人看一眼（不擋，只提醒）
+const CANCEL_MARK = "[已取消]"; // 來源公布取消時，加在既有列的賽事名稱前面（不刪除該列）
 const PAGE_TEXT_LIMIT = 350_000; // 餵給 LLM 的每頁文字上限（字元）
 const GEMINI_CALL_GAP_MS = 7_000; // 免費額度 10 RPM，兩次呼叫間隔 7 秒
 const HIDE_ENDED_AFTER_DAYS = 3; // 與網站一致：結束超過 3 天的不收
@@ -312,6 +313,7 @@ const LISTING_SCHEMA = {
       end_date: { type: "STRING", description: "YYYY-MM-DD" },
       location: { type: "STRING", description: "City, Country（英文）" },
       detail_url: { type: "STRING" },
+      cancelled: { type: "BOOLEAN", description: "頁面上標示為取消就填 true" },
     },
     required: ["source_index", "tournament", "start_date", "end_date", "location"],
   },
@@ -364,7 +366,9 @@ function listingPrompt(items, today) {
 其他規則：
 - 日期一律輸出 YYYY-MM-DD，年份要依上下文推斷正確。
 - 只列「今天（${today}）當天或之後才結束」的系列；已結束的不要。
-- 標示為取消（CANCELLED / 已取消）的不要。
+- 頁面上標示為取消的（CANCELLED / ***CANCELLED*** / 已取消 / 中止）**也要輸出**，但把 cancelled 設成 true，
+  而且 tournament 要填「拿掉取消字樣之後的原始賽事名稱」（例如頁面寫「***CANCELLED*** Poker Dream 27 Jeju」，
+  就填「Poker Dream 27 Jeju」）。沒有取消字樣的一律填 false。
 - location 用英文「City, Country」格式，例如 "Taipei, Taiwan"、"Jeju, South Korea"。頁面上只有國家沒有城市時就只填國家。
 - detail_url 填該系列詳情頁的完整網址（從 [link:...] 取），找不到就填空字串。
 - 找不到的欄位填空字串，不要編造。頁面上沒有日期的系列就不要輸出。
@@ -486,6 +490,23 @@ export function colLetter(i) {
   return s;
 }
 
+// 取消註記：只在既有列的賽事名稱前加上標記，不刪除、不動其他欄位
+async function annotateCancelled(client, tab, headers, changes) {
+  const ti = headers.indexOf("Tournament");
+  await client.request({
+    url: `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values:batchUpdate`,
+    method: "POST",
+    data: {
+      valueInputOption: "RAW",
+      data: changes.map((c) => ({
+        range: `${tab}!${colLetter(ti)}${c.row}`,
+        values: [[c.newName]],
+      })),
+    },
+  });
+  return changes.length;
+}
+
 async function updateDateCells(client, tab, headers, changes) {
   const si = headers.indexOf("Start Date");
   const ei = headers.indexOf("End Date");
@@ -510,6 +531,9 @@ async function updateDateCells(client, tab, headers, changes) {
 
 // ---------- 驗證 ----------
 
+// 取消的賽事不會被新增，只用來比對既有列然後加註記，所以驗證放寬：
+// 只要名稱和日期站得住腳就好，不要求地點，也不套地區規則
+// （彙整站對取消的場次常常連地點都不填，要求太嚴反而漏掉該註記的）。
 export function validateEvent(ev, todayTs) {
   const s = parseYMD(ev["Start Date"]);
   const e = parseYMD(ev["End Date"]);
@@ -521,8 +545,8 @@ export function validateEvent(ev, todayTs) {
   const year = Number(String(ev["Start Date"]).slice(0, 4));
   const nowYear = Number(taipeiTodayYMD().slice(0, 4));
   if (year < nowYear - 1 || year > nowYear + 2) return "年份可疑";
+  if (ev._cancelled) return null;
   if (!String(ev.Location ?? "").trim()) return "沒有地點";
-  if (/cancel|取消/i.test(ev.Tournament)) return "已取消";
   if (!passesGeoRule(ev)) return `地區不收（${ev.Location}）`;
   return null;
 }
@@ -592,14 +616,36 @@ export function parseTribeEvents(json, blacklist) {
     const native = cleanLink(org?.website || e.venue?.website || "", blacklist);
     const city = fixCity(e.venue?.city ?? "");
     const country = fixCountry(e.venue?.country ?? "");
+    const rawTitle = String(e.title ?? "")
+      .replace(/&#8211;|&#8212;/g, "-")
+      .replace(/&amp;/g, "&")
+      .trim();
+    // PCA 用「***CANCELLED*** 賽事名」標記取消，把標記拆下來當旗標、名稱留乾淨的
+    const { name, cancelled } = stripCancelMark(rawTitle);
     return {
-      tournament: String(e.title ?? "").replace(/&#8211;|&#8212;/g, "-").replace(/&amp;/g, "&").trim(),
+      tournament: name,
       start_date: String(e.start_date ?? "").slice(0, 10),
       end_date: String(e.end_date ?? "").slice(0, 10),
       location: [city, country].filter(Boolean).join(", "),
       detail_url: native,
+      cancelled,
     };
   });
+}
+
+// 把名稱裡的取消字樣拆下來，回傳乾淨名稱 + 是否取消
+export function stripCancelMark(title) {
+  const t = String(title ?? "").trim();
+  // 只認完整的字：「Cancellation Policy」這種不會被誤判成取消
+  const word = /\*{0,3}\s*(cancell?ed|已取消|中止)\s*\*{0,3}/i;
+  if (!word.test(t)) return { name: t, cancelled: false };
+  const name = t
+    .replace(new RegExp(word.source, "gi"), " ")
+    .replace(/[（([【]\s*[)）\]】]/g, " ") // 字樣拿掉後留下的空括號一起清掉
+    .replace(/^[\s\-–—:：|]+|[\s\-–—:：|]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return { name, cancelled: true };
 }
 
 async function fetchSourceText(src) {
@@ -763,6 +809,7 @@ async function main() {
         "Handbook URL": cleanLink(ev.detail_url, blacklist),
         _tier: src.tier,
         _src: src.name.split(" ")[0],
+        _cancelled: ev.cancelled === true,
       };
       if (validateEvent(row, todayTs)) continue;
       candidates.push(row);
@@ -842,15 +889,38 @@ async function main() {
 
   const collected = [];
   const dateChanges = [];
+  const cancellations = [];
   let skippedExisting = 0;
+  let skippedCancelled = 0;
   for (const g of groups) {
+    const rows = g.idxs.map((i) => candidates[i]);
     const row = mergeGroup(g, candidates);
     // alreadyInSheet === null 代表 LLM 沒判（漏了或整個失敗）→ 用保守判定
     const exists =
       g.alreadyInSheet === null ? isDuplicateConservative(row, existing) : g.alreadyInSheet;
+    const sheetRow = exists ? findSheetRow(g.matched, existing) : null;
+
+    // 取消的判定也照 tier 優先序：主辦官網還在列這場，就不採信彙整站說的取消
+    const minCancelTier = Math.min(...rows.filter((r) => r._cancelled).map((r) => r._tier), Infinity);
+    const minActiveTier = Math.min(...rows.filter((r) => !r._cancelled).map((r) => r._tier), Infinity);
+
+    if (minCancelTier <= minActiveTier) {
+      skippedCancelled++;
+      // 取消的一律不新增；已經在表上的就加註記，那一列本身不動也不刪
+      if (sheetRow && !String(sheetRow.Tournament).includes(CANCEL_MARK)) {
+        const said = rows.find((r) => r._cancelled && r._tier === minCancelTier);
+        cancellations.push({
+          row: sheetRow._row,
+          oldName: sheetRow.Tournament,
+          newName: `${CANCEL_MARK} ${sheetRow.Tournament}`.trim(),
+          src: `T${said._tier}:${said._src}`,
+        });
+      }
+      continue;
+    }
     if (exists) {
       skippedExisting++;
-      const chg = detectDateChange(row, findSheetRow(g.matched, existing));
+      const chg = detectDateChange(row, sheetRow);
       if (chg) dateChanges.push(chg);
       continue;
     }
@@ -858,7 +928,16 @@ async function main() {
     if (collected.some((c) => isDuplicateConservative(row, [c]))) continue;
     collected.push(row);
   }
-  console.log(`分成 ${groups.length} 場｜Sheet 已有 ${skippedExisting} 場｜準備新增 ${collected.length} 場`);
+  console.log(
+    `分成 ${groups.length} 場｜Sheet 已有 ${skippedExisting} 場｜已取消 ${skippedCancelled} 場｜準備新增 ${collected.length} 場`,
+  );
+
+  if (cancellations.length) {
+    console.log(`\n=== 🚫 偵測到 ${cancellations.length} 場已取消，在表上加註記（不刪除該列）===`);
+    for (const c of cancellations) {
+      console.log(`  第 ${c.row} 列：「${c.oldName}」→「${c.newName}」  依據 ${c.src}`);
+    }
+  }
 
   // 改期報告（不論有沒有要新增都要印）
   if (dateChanges.length) {
@@ -945,7 +1024,7 @@ async function main() {
   }
 
   if (DRY_RUN) {
-    console.log("\n（DRY_RUN 模式：以上只是預覽，沒有寫入 Sheet，也沒有更新任何日期）");
+    console.log("\n（DRY_RUN 模式：以上只是預覽，沒有寫入 Sheet，也沒有更新日期或取消註記）");
     return;
   }
 
@@ -959,6 +1038,11 @@ async function main() {
   if (UPDATE_DATES && dateChanges.length) {
     const n = await updateDateCells(client, tab, headers, dateChanges);
     console.log(`✅ 已更新 ${n} 場的日期（只改日期欄，其他欄位未動）`);
+  }
+
+  if (cancellations.length) {
+    const n = await annotateCancelled(client, tab, headers, cancellations);
+    console.log(`✅ 已為 ${n} 場加上「${CANCEL_MARK}」註記（該列保留，其他欄位未動）`);
   }
 }
 
