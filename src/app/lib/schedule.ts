@@ -5,23 +5,51 @@ import { Row, toNumber } from "./types";
 const HIDE_ENDED_AFTER_DAYS = 3;
 
 // ====== 非台灣賽事的買入門檻 ======
-// 台灣（台北）的賽事一律顯示；其他地區只顯示主賽事買入達到門檻的，濾掉小型賽事。
+// 顯示規則（由上往下判斷，符合任一條就顯示）：
+//   1. 台灣（台北）的賽事——一律顯示
+//   2. 在 ALWAYS_SHOW_SERIES 豁免清單裡的系列——一律顯示，不看買入
+//   3. 主賽事買入 ≥ MIN_USD_OUTSIDE_TAIWAN
+//   4. 以上都不符合（含買入不明）——隱藏
 const MIN_USD_OUTSIDE_TAIWAN = 500;
 
-// 買入金額不明時要不要顯示。不明的情況有兩種：表格那格是空的，或匯率 API 掛掉導致換算不出來。
-// true  = 顯示（只擋「確定低於門檻」的；抓不到資料不等於賽事很小，匯率掛掉更不該讓整個表消失）
-// false = 隱藏（表格會乾淨很多，但沒填買入的大型賽事也會跟著不見）
-const SHOW_WHEN_BUYIN_UNKNOWN = true;
+// 豁免清單：知名／大型系列，就算表格還沒填買入金額也要顯示。
+// 比對不分大小寫，且要求前後是字界，所以 "APT" 不會誤中 "ADAPT"、"APPT"。
+// 要增減直接改這個陣列。
+const ALWAYS_SHOW_SERIES: string[] = [
+  "APT",                        // Asian Poker Tour（不會誤中 APPT，APT 不是 APPT 的子字串）
+  "APPT",                       // PokerStars Live 亞太
+  "WSOP", "World Series of Poker",
+  "WPT",                        // 只有辦在收錄範圍內的才會進到這裡（首爾、柬埔寨）
+  "Triton",
+  "Poker Dream",
+  "GOP", "Gods of Poker",       // 賽事名有時寫成「The Trial of Wisdom - GOP Taipei」
+  "MGM",                        // MGM Poker Championship，澳門唯一的系列
+  "KPC", "Korea Poker Cup",
+  "RDPT", "Jeju Poker Festival", // Red Dragon 的賽事有時不掛 RDPT 前綴
+];
+
+function matchesSeries(text: string, series: string): boolean {
+  const escaped = series.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(text);
+}
 
 // Location 欄是人工填的，格式像「台灣 台北 / Taipei, Taiwan」，中英文都可能出現
 export function isLocalTaiwan(location: string | undefined): boolean {
   return /taiwan|taipei|台灣|台北/i.test(String(location ?? ""));
 }
 
-// 這一列該不該出現在網站上
-export function passesBuyInFloor(row: Row): boolean {
+export function isAlwaysShowSeries(tournament: string | undefined): boolean {
+  const t = String(tournament ?? "");
+  return ALWAYS_SHOW_SERIES.some((s) => matchesSeries(t, s));
+}
+
+// 這一列該不該出現在網站上。
+// fxAvailable=false（匯率 API 掛了）時整條規則停用：第三方服務出問題不該讓網站整片空白。
+export function passesBuyInFloor(row: Row, fxAvailable: boolean): boolean {
+  if (!fxAvailable) return true;
   if (isLocalTaiwan(row["Location"])) return true;
-  if (row.usd == null) return SHOW_WHEN_BUYIN_UNKNOWN;
+  if (isAlwaysShowSeries(row["Tournament"])) return true;
+  if (row.usd == null) return false; // 買入不明且不在豁免清單 → 隱藏
   return row.usd >= MIN_USD_OUTSIDE_TAIWAN;
 }
 
@@ -124,5 +152,6 @@ export async function getScheduleRows(): Promise<Row[]> {
 
   // 買入門檻要在換算 USD 之後才能判斷，所以放在最後
   // （在這裡過濾而不是在畫面上，濾掉的資料就不會傳到瀏覽器，地區下拉選單也不會列出空的地區）
-  return withUsd.filter(passesBuyInFloor);
+  const fxAvailable = Object.keys(rates).length > 0;
+  return withUsd.filter((r) => passesBuyInFloor(r, fxAvailable));
 }
