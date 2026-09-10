@@ -180,12 +180,19 @@ export function isDuplicateConservative(ev, existing) {
 
 // ---------- 抓網頁 ----------
 
-async function fetchPage(url) {
+async function fetchPage(url, { json = false } = {}) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30_000);
   try {
     const res = await fetch(url, {
-      headers: { "User-Agent": UA, "Accept-Language": "en,zh-TW;q=0.9,ja;q=0.8,ko;q=0.7" },
+      headers: {
+        "User-Agent": UA,
+        "Accept-Language": "en,zh-TW;q=0.9,ja;q=0.8,ko;q=0.7",
+        // 有些網站的防護會擋掉沒帶 Accept 的請求（看起來像機器人）
+        Accept: json
+          ? "application/json, text/plain, */*"
+          : "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
       signal: ctrl.signal,
       redirect: "follow",
     });
@@ -194,6 +201,23 @@ async function fetchPage(url) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// JSON 來源專用：PokerCalendar.asia 從 GitHub Actions 抓有時會回 HTML（從一般網路正常），
+// 疑似機房 IP 被防護擋掉。重試一次，並把回傳內容的開頭記進 log 以便判斷是什麼擋的。
+async function fetchJson(src) {
+  let lastHead = "";
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const body = await fetchPage(src.url, { json: true });
+    try {
+      return JSON.parse(body);
+    } catch {
+      lastHead = body.replace(/\s+/g, " ").slice(0, 300);
+      console.warn(`  ${src.name} 回傳的不是 JSON（第 ${attempt} 次）：${lastHead}`);
+      if (attempt < 2) await sleep(5_000);
+    }
+  }
+  throw new Error(`連續兩次都不是 JSON，跳過這個來源。回傳開頭：${lastHead}`);
 }
 
 // HTML → 純文字。保留三樣 LLM 需要的東西：
@@ -835,7 +859,7 @@ async function main() {
   // JSON 來源（PokerCalendar.asia）：結構化資料直接解析，完全不用 LLM
   for (const src of sources.filter((s) => s.type === "json")) {
     try {
-      addEvents(src, parseTribeEvents(JSON.parse(await fetchPage(src.url)), blacklist));
+      addEvents(src, parseTribeEvents(await fetchJson(src), blacklist));
     } catch (e) {
       console.error(`❌ T${src.tier} ${src.name} 失敗：${e.message}`);
     }
