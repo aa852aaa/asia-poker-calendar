@@ -525,6 +525,22 @@ export function colLetter(i) {
   return s;
 }
 
+// 補空白：把指定格子填上值。呼叫端已經確認過那些格子原本是空的（Location 格式升級除外）
+async function fillBlankCells(client, tab, headers, fills) {
+  await client.request({
+    url: `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values:batchUpdate`,
+    method: "POST",
+    data: {
+      valueInputOption: "RAW",
+      data: fills.map((f) => ({
+        range: `${tab}!${colLetter(headers.indexOf(f.col))}${f.row}`,
+        values: [[f.value]],
+      })),
+    },
+  });
+  return fills.length;
+}
+
 // 取消註記：只在既有列的賽事名稱前加上標記，不刪除、不動其他欄位
 async function annotateCancelled(client, tab, headers, changes) {
   const ti = headers.indexOf("Tournament");
@@ -848,6 +864,51 @@ export function findSheetRow(name, sheetRows) {
     : null;
 }
 
+// 賽事的資訊是分批公布的：先出大概日期，兩三個月前才出賽程表和報名費。
+// 所以第一次抓到的一定是最不完整的版本，之後每一輪都要回頭把空的欄位補上，
+// 否則買入永遠空白——而買入正是網站顯示門檻的依據。
+//
+// 規則是「只補空白，不覆蓋」：Wei 手填的、或先前抓到的值一律保留。
+// 唯一的例外是 Location 的格式升級（同一個地點，只是換成雙語寫法），
+// 而且要先確認英文部分指的是同一個地方才換。
+const CJK = /[一-鿿]/;
+
+function sameePlace(a, b) {
+  const norm = (s) =>
+    String(s ?? "")
+      .toLowerCase()
+      .replace(/south korea/g, "korea")
+      .replace(/[^a-z]/g, "");
+  return norm(a) === norm(b) && norm(a).length > 0;
+}
+
+export function detectBlankFills(merged, sheetRow) {
+  if (!sheetRow) return [];
+  const blank = (v) => String(v ?? "").trim() === "";
+  const fills = [];
+
+  // 買入和幣別要嘛一起補、要嘛都不補——只有金額沒幣別換算不了
+  if (blank(sheetRow["ME Buy-in"]) && !blank(merged["ME Buy-in"]) && !blank(merged.Currency)) {
+    fills.push({ col: "ME Buy-in", value: merged["ME Buy-in"] });
+    if (blank(sheetRow.Currency)) fills.push({ col: "Currency", value: merged.Currency });
+  }
+
+  if (blank(sheetRow["Handbook URL"]) && !blank(merged["Handbook URL"])) {
+    fills.push({ col: "Handbook URL", value: merged["Handbook URL"] });
+  }
+
+  // 舊列是純英文地點時升級成雙語。只有在確認指的是同一個地方時才換。
+  // merged 這時候還是英文（雙語轉換只在寫入新列前做），所以這裡自己轉一次
+  const oldLoc = String(sheetRow.Location ?? "");
+  const newLoc = formatLocation(merged.Location);
+  if (oldLoc.trim() && !CJK.test(oldLoc) && CJK.test(newLoc)) {
+    const enHalf = newLoc.split("\n").pop() ?? "";
+    if (sameePlace(oldLoc, enHalf)) fills.push({ col: "Location", value: newLoc });
+  }
+
+  return fills.map((f) => ({ ...f, row: sheetRow._row, tournament: sheetRow.Tournament }));
+}
+
 // 改期偵測：既有列的日期 vs 主辦方（tier 1/2）現在公布的日期
 export function detectDateChange(merged, sheetRow) {
   if (!sheetRow) return null;
@@ -1011,6 +1072,7 @@ async function main() {
   const collected = [];
   const dateChanges = [];
   const cancellations = [];
+  const blankFills = [];
   let skippedExisting = 0;
   let skippedCancelled = 0;
   for (const g of groups) {
@@ -1046,8 +1108,14 @@ async function main() {
     if (exists) {
       skippedExisting++;
       // 同樣的道理：LLM 沒真的判過（走保守退路）就沒有可靠的對應列，不要去改表格
-      const chg = g.alreadyInSheet === null ? null : detectDateChange(row, sheetRow);
-      if (chg && !dateChanges.some((c) => c.row === chg.row)) dateChanges.push(chg);
+      if (g.alreadyInSheet !== null) {
+        const chg = detectDateChange(row, sheetRow);
+        if (chg && !dateChanges.some((c) => c.row === chg.row)) dateChanges.push(chg);
+        // 賽程表和報名費是後來才公布的，每輪都回頭補一次空欄位
+        for (const f of detectBlankFills(row, sheetRow)) {
+          if (!blankFills.some((x) => x.row === f.row && x.col === f.col)) blankFills.push(f);
+        }
+      }
       continue;
     }
     // 同批之間再擋一次，避免 LLM 分組沒抓到的重複
@@ -1057,6 +1125,13 @@ async function main() {
   console.log(
     `分成 ${groups.length} 場｜Sheet 已有 ${skippedExisting} 場｜已取消 ${skippedCancelled} 場｜準備新增 ${collected.length} 場`,
   );
+
+  if (blankFills.length) {
+    console.log(`\n=== 📝 補上既有列的 ${blankFills.length} 個空欄位（只補空的，不覆蓋已填的）===`);
+    for (const f of blankFills) {
+      console.log(`  第 ${f.row} 列 ${f.tournament}｜${f.col} ← ${String(f.value).replace(/\n/g, " / ")}`);
+    }
+  }
 
   if (cancellations.length) {
     console.log(`\n=== 🚫 偵測到 ${cancellations.length} 場已取消，在表上加註記（不刪除該列）===`);
@@ -1159,7 +1234,7 @@ async function main() {
   }
 
   if (DRY_RUN) {
-    console.log("\n（DRY_RUN 模式：以上只是預覽，沒有寫入 Sheet，也沒有更新日期或取消註記）");
+    console.log("\n（DRY_RUN 模式：以上只是預覽，沒有寫入 Sheet，也沒有補空欄位、更新日期或加取消註記）");
     return;
   }
 
@@ -1178,6 +1253,11 @@ async function main() {
   if (cancellations.length) {
     const n = await annotateCancelled(client, tab, headers, cancellations);
     console.log(`✅ 已為 ${n} 場加上「${CANCEL_MARK}」註記（該列保留，其他欄位未動）`);
+  }
+
+  if (blankFills.length) {
+    const n = await fillBlankCells(client, tab, headers, blankFills);
+    console.log(`✅ 已補上 ${n} 個空欄位（原本有值的一個都沒動）`);
   }
 }
 

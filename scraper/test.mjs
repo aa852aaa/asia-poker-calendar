@@ -7,7 +7,7 @@ import {
   mergeGroup, detectDateChange, validateEvent, colLetter, htmlToText,
   fixCountry, fixCity, isDuplicateConservative, pickReplacementModel,
   applyBrand, festivalDays, isDailyQuotaError, packBatches, stripCancelMark, findSheetRow,
-  formatLocation, pickBuyIn, seriesLink,
+  formatLocation, pickBuyIn, seriesLink, detectBlankFills,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -291,6 +291,46 @@ eq("對照表沒有的系列 → 留空，不亂給連結",
 eq("空名稱 → 留空", seriesLink("", SL), "");
 ok("每個系列的網址都不是彙整站",
   SL.every((e) => !/pokercalendar\.asia|somuchpoker\.com|thehendonmob\.com/i.test(e.url)));
+
+console.log("\n【20】回頭補既有列的空欄位（賽程表和報名費是後來才公布的）");
+const cols = (fs) => fs.map((f) => f.col).sort();
+const sheetOld = {
+  _row: 88, Tournament: "KPC Poker Series October 2026",
+  "Start Date": "2026-10-10", "End Date": "2026-10-21",
+  Location: "Jeju, South Korea", "ME Buy-in": "", Currency: "", "Handbook URL": "",
+};
+const fresh = {
+  Tournament: "KPC Series October 2026", Location: "Jeju, South Korea",
+  "ME Buy-in": "1500000", Currency: "KRW", "Handbook URL": "https://www.kpcpoker.com/?lang=en",
+};
+eq("三種都補：買入＋幣別＋連結＋地點升級",
+  cols(detectBlankFills(fresh, sheetOld)),
+  ["Currency", "Handbook URL", "Location", "ME Buy-in"].sort());
+eq("補上的地點是雙語格式",
+  detectBlankFills(fresh, sheetOld).find((f) => f.col === "Location")?.value,
+  "韓國 濟州島\nJeju, Korea");
+
+const sheetFilled = { ...sheetOld, "ME Buy-in": "999", Currency: "USD", "Handbook URL": "https://wei-picked.example/", Location: "韓國 濟州島\nJeju, Korea" };
+eq("已經有值的一個都不補（不覆蓋 Wei 手填的）", detectBlankFills(fresh, sheetFilled), []);
+
+eq("只有金額沒幣別 → 兩個都不補（換算不了）",
+  detectBlankFills({ ...fresh, Currency: "" }, sheetOld).some((f) => f.col === "ME Buy-in"), false);
+// 新資料的買入和連結也是空的時候，只做地點格式升級——那不需要新資料，
+// 是拿舊值本身換個寫法，跟買入有沒有公布無關
+eq("新資料沒有買入也沒有連結 → 只升級地點",
+  cols(detectBlankFills({ Location: "Jeju, South Korea" }, sheetOld)), ["Location"]);
+eq("新舊都沒有可補的 → 空陣列",
+  detectBlankFills({ Location: "" }, { ...sheetOld, Location: "韓國 濟州島\nJeju, Korea" }), []);
+eq("對不到列 → 不補", detectBlankFills(fresh, null), []);
+
+// 地點升級的安全線：只有確認是同一個地方才換寫法
+eq("地點指的不是同一個地方 → 不動它",
+  detectBlankFills({ ...fresh, Location: "Seoul, South Korea" }, sheetOld)
+    .some((f) => f.col === "Location"), false);
+eq("舊值已經有中文 → 不動它",
+  detectBlankFills(fresh, { ...sheetOld, Location: "韓國 濟州島\nJeju, Korea" })
+    .some((f) => f.col === "Location"), false);
+eq("補上的欄位帶著列號", detectBlankFills(fresh, sheetOld)[0]?.row, 88);
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);
