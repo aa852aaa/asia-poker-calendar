@@ -617,7 +617,7 @@ async function loadSources() {
     }
   }
   out.sort((a, b) => a.tier - b.tier);
-  return { sources: out, blacklist };
+  return { sources: out, blacklist, seriesLinks: raw.seriesLinks ?? [] };
 }
 
 export function festivalDays(ev) {
@@ -693,6 +693,20 @@ export function applyBrand(name, brand) {
   if (!brand || !n) return n;
   const has = new RegExp(`(^|[^a-z0-9])${brand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i");
   return has.test(n) ? n : `${brand} ${n}`;
+}
+
+// 抓不到該場賽事的專屬連結時，用 sources.json 的 seriesLinks 補上主辦系列的官網。
+// 依賴彙整站提供連結是錯的做法——彙整站一掛，整輪的連結就全空了（2026-09-10 就是這樣）。
+export function seriesLink(tournament, seriesLinks) {
+  const name = String(tournament ?? "");
+  if (!name) return "";
+  for (const entry of seriesLinks ?? []) {
+    for (const alias of entry.match ?? []) {
+      const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(name)) return entry.url;
+    }
+  }
+  return "";
 }
 
 // 彙整站的連結不能用（會讓網站上的連結指回別人家）
@@ -861,7 +875,7 @@ export function detectDateChange(merged, sheetRow) {
 // ---------- 主流程 ----------
 
 async function main() {
-  const { sources, blacklist } = await loadSources();
+  const { sources, blacklist, seriesLinks } = await loadSources();
 
   if (TEST_FETCH) {
     // 不需要金鑰的連線測試：確認每個來源抓得到、文字量正常
@@ -903,13 +917,17 @@ async function main() {
     for (const ev of events ?? []) {
       t.raw++;
       if (t.kept >= MAX_NEW_PER_SOURCE) continue; // 單一來源上限，防 LLM 幻覺灌爆表格
+      // 先補品牌再拿去比對系列連結——JOPT 的原始名稱是「2026 Sapporo #02」，
+      // 補成「JOPT 2026 Sapporo #02」之後才對得到 japanopenpoker.com
+      const name = applyBrand(ev.tournament, src.brand);
       const row = {
         "Start Date": String(ev.start_date ?? "").trim(),
         "End Date": String(ev.end_date ?? "").trim() || String(ev.start_date ?? "").trim(),
         "Location": String(ev.location ?? "").trim(),
-        "Tournament": applyBrand(ev.tournament, src.brand),
+        "Tournament": name,
         ...pickBuyIn(ev),
-        "Handbook URL": cleanLink(ev.detail_url, blacklist),
+        // 優先用該場賽事的專屬連結；沒有就退回主辦系列官網；再沒有才留空
+        "Handbook URL": cleanLink(ev.detail_url, blacklist) || seriesLink(name, seriesLinks),
         _tier: src.tier,
         _src: src.name.split(" ")[0],
         _cancelled: ev.cancelled === true,

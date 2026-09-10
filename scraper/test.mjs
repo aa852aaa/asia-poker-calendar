@@ -7,7 +7,7 @@ import {
   mergeGroup, detectDateChange, validateEvent, colLetter, htmlToText,
   fixCountry, fixCity, isDuplicateConservative, pickReplacementModel,
   applyBrand, festivalDays, isDailyQuotaError, packBatches, stripCancelMark, findSheetRow,
-  formatLocation, pickBuyIn,
+  formatLocation, pickBuyIn, seriesLink,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -262,6 +262,35 @@ eq("一億以上（八成是把保證獎池當成買入）→ 留白",
 eq("幣別不是三碼 → 留白", pickBuyIn({ me_buyin: 5000, currency: "NT$" }), { "ME Buy-in": "", Currency: "" });
 eq("有金額沒幣別 → 留白（換算不了就別寫）",
   pickBuyIn({ me_buyin: 5000, currency: "" }), { "ME Buy-in": "", Currency: "" });
+
+console.log("\n【19】系列官網後備連結（不依賴彙整站提供連結）");
+const srcJson = JSON.parse(await readFile(new URL("./sources.json", import.meta.url), "utf8"));
+const SL = srcJson.seriesLinks;
+// 2026-09-10 那兩輪實際留白的賽事名，現在都該對得到官網
+eq("KPC Poker Series October 2026", seriesLink("KPC Poker Series October 2026", SL),
+  "https://www.kpcpoker.com/?lang=en");
+eq("WPT Seoul 2026", seriesLink("WPT Seoul 2026", SL), "https://www.worldpokertour.com/");
+eq("Triton SHRS Jeju II S5", seriesLink("Triton SHRS Jeju II S5", SL),
+  "https://tritonpokerseries.com/en-US/events");
+eq("USOP Grand Championship Vietnam 2026", seriesLink("USOP Grand Championship Vietnam 2026", SL),
+  "https://useriespoker.com/");
+eq("Manila Megastack 25", seriesLink("Manila Megastack 25", SL), "https://www.pokerstarslive.com/appt/");
+eq("Manila Super Series 24", seriesLink("Manila Super Series 24", SL), "https://www.pokerstarslive.com/appt/");
+eq("JOPT 2027 Fukuoka #01（補過品牌才對得到）", seriesLink("JOPT 2027 Fukuoka #01", SL),
+  "https://japanopenpoker.com/");
+eq("Jeju Poker Festival 2026 → Red Dragon（名稱沒有 RDPT 字樣）",
+  seriesLink("Jeju Poker Festival 2026", SL), "https://playreddragon.com/series-schedule.html");
+eq("GLPC Ultimate Showdown 2026", seriesLink("GLPC Ultimate Showdown 2026", SL),
+  "https://grandloyal.com.vn/");
+eq("RPT Championship Grand Final", seriesLink("RPT Championship Grand Final", SL),
+  "https://royalpokerclub.vn/");
+eq("AJPC Samurai Circuit - Incheon 2026 III", seriesLink("AJPC Samurai Circuit - Incheon 2026 III", SL),
+  "https://samurai.ajpc.jp/en/");
+eq("對照表沒有的系列 → 留空，不亂給連結",
+  seriesLink("Quads Poker Championship Winter 2026", SL), "");
+eq("空名稱 → 留空", seriesLink("", SL), "");
+ok("每個系列的網址都不是彙整站",
+  SL.every((e) => !/pokercalendar\.asia|somuchpoker\.com|thehendonmob\.com/i.test(e.url)));
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);

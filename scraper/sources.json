@@ -31,6 +31,30 @@
       "enabled": false, "note": "只有 Logo 和 PDF，日期靠 CTP（tier 2）比較準" }
   ],
 
+  "_連結對照說明": "賽事系列 → 官方網站。抓不到該場賽事的專屬連結時用這個補，不依賴彙整站提供連結。比對用字界、不分大小寫，由上往下第一個命中的就採用，所以多字的、特定的要排前面。要加新系列就在這裡加一行。",
+  "seriesLinks": [
+    { "match": ["Jeju Poker Festival", "RDPT", "Red Dragon"], "url": "https://playreddragon.com/series-schedule.html" },
+    { "match": ["Manila Megastack", "Manila Super Series", "Manila Special", "APPT", "PokerStars Live"], "url": "https://www.pokerstarslive.com/appt/" },
+    { "match": ["Korea Poker Cup", "KPC"], "url": "https://www.kpcpoker.com/?lang=en" },
+    { "match": ["Gods of Poker", "GOP"], "url": "https://godsofpoker.com/series" },
+    { "match": ["Zodiac Series of Poker", "ZSOP"], "url": "https://zodiacseriesofpoker.com/series" },
+    { "match": ["Players Series", "PSC"], "url": "https://www.playersseries.com/series" },
+    { "match": ["World Poker Games", "WPG"], "url": "https://wpg.poker/events/" },
+    { "match": ["Ace Poker League", "APL"], "url": "https://acepokerleague.com/" },
+    { "match": ["Harbour Poker Cup", "HPC"], "url": "https://hpc.poker/" },
+    { "match": ["Royal Poker Club", "RPT"], "url": "https://royalpokerclub.vn/" },
+    { "match": ["Grand Loyal", "GLPC"], "url": "https://grandloyal.com.vn/" },
+    { "match": ["U Series", "USOP"], "url": "https://useriespoker.com/" },
+    { "match": ["AJPC", "Samurai Circuit"], "url": "https://samurai.ajpc.jp/en/" },
+    { "match": ["Ola Poker Tour", "OLA"], "url": "https://olapokertour.com/series/" },
+    { "match": ["JOPT", "Japan Open Poker"], "url": "https://japanopenpoker.com/" },
+    { "match": ["P1 Circuit", "P1"], "url": "https://p1-circuit.one/" },
+    { "match": ["Triton"], "url": "https://tritonpokerseries.com/en-US/events" },
+    { "match": ["APT", "Asian Poker Tour"], "url": "https://www.theasianpokertour.com/series" },
+    { "match": ["WSOP", "World Series of Poker"], "url": "https://www.wsop.com/schedule/" },
+    { "match": ["WPT", "World Poker Tour"], "url": "https://www.worldpokertour.com/" }
+  ],
+
   "_黑名單說明": "彙整站網域。從任何來源抽到的連結只要落在這裡就丟棄，絕不寫進 Handbook URL——避免網站上的連結指回別人的彙整站。",
   "linkBlacklist": [
     "pokercalendar.asia", "somuchpoker.com", "pokernews.com", "thehendonmob.com",
