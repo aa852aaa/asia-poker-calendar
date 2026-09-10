@@ -343,6 +343,8 @@ const LISTING_SCHEMA = {
       location: { type: "STRING", description: "City, Country（英文）" },
       detail_url: { type: "STRING" },
       cancelled: { type: "BOOLEAN", description: "頁面上標示為取消就填 true" },
+      me_buyin: { type: "NUMBER", nullable: true, description: "主賽事買入，列表上有寫才填" },
+      currency: { type: "STRING", description: "買入的幣別 ISO 代碼" },
     },
     required: ["source_index", "tournament", "start_date", "end_date", "location"],
   },
@@ -404,6 +406,10 @@ function listingPrompt(items, today) {
 - tournament 要能「單獨看懂」。列表上如果只寫短標題（例如「2026 Sapporo #02」），請從頁面標題或
   網站名稱找出所屬的巡迴賽／系列名稱補在前面（變成「JOPT 2026 Sapporo #02」）。
   這個名稱會單獨顯示在賽程表上，旁邊沒有任何說明。
+- me_buyin：**列表上有明確寫出主賽事（Main Event）買入金額時才填**，只填數字，currency 填 ISO 代碼
+  （TWD、JPY、KRW、USD、PHP、VND、MYR、HKD、SGD、THB、MOP、CNY 等）。
+  ⚠️ 要的是 buy-in（買入費），**不是保證獎池**（GTD / guarantee / prize pool / 게런티 / 総額）——
+  獎池金額通常大好幾個數量級，拿錯會讓表格完全失真。分不清楚或頁面沒寫就填 null，絕對不要猜。
 
 頁面內容：
 
@@ -618,6 +624,66 @@ export function festivalDays(ev) {
   const s = parseYMD(ev["Start Date"]);
   const e = parseYMD(ev["End Date"]);
   return s == null || e == null ? 0 : Math.round((e - s) / 86400_000) + 1;
+}
+
+// Wei 手填的 Location 是雙語：「台灣 台北\nTaipei, Taiwan」、只有國家時是「馬來西亞 \nMalaysia」。
+// 爬蟲原本只寫英文，混在表裡看起來很突兀，所以照他的格式補上中文。
+const ZH_COUNTRY = {
+  taiwan: ["台灣", "Taiwan"],
+  japan: ["日本", "Japan"],
+  "south korea": ["韓國", "Korea"], // Wei 的表寫「Korea」不是「South Korea」
+  korea: ["韓國", "Korea"],
+  philippines: ["菲律賓", "Philippines"],
+  vietnam: ["越南", "Vietnam"],
+  malaysia: ["馬來西亞", "Malaysia"],
+  singapore: ["新加坡", "Singapore"],
+  macau: ["澳門", "Macau"],
+  "hong kong": ["香港", "Hong Kong"],
+  thailand: ["泰國", "Thailand"],
+  cambodia: ["柬埔寨", "Cambodia"],
+  china: ["中國", "China"],
+  indonesia: ["印尼", "Indonesia"],
+  mongolia: ["蒙古", "Mongolia"],
+  bahamas: ["巴哈馬", "Bahamas"],
+  "united states": ["美國", "United States"],
+};
+const ZH_CITY = {
+  taipei: "台北", "taipei city": "台北", kaohsiung: "高雄",
+  jeju: "濟州島", incheon: "仁川", seoul: "首爾", busan: "釜山",
+  manila: "馬尼拉", "metro manila": "馬尼拉", cebu: "宿霧", clark: "克拉克",
+  hanoi: "河內", "ho chi minh city": "胡志明市", "ha long": "下龍灣", "phu quoc": "富國島", "da nang": "峴港",
+  tokyo: "東京", osaka: "大阪", sapporo: "札幌", fukuoka: "福岡", nagoya: "名古屋", kyoto: "京都",
+  "kuala lumpur": "吉隆坡", pahang: "彭亨", genting: "雲頂",
+  cotai: "路氹", macau: "澳門", "hong kong": "香港", singapore: "新加坡",
+  bangkok: "曼谷", "phnom penh": "金邊", sanya: "三亞", hengqin: "橫琴",
+  paradise: "天堂島", "las vegas": "拉斯維加斯",
+};
+
+// 列表頁本來就寫了買入金額時直接用，省下一次詳情頁的 LLM 呼叫（每日只有 20 次很珍貴）。
+// 上限擋掉明顯是保證獎池被誤當成買入的情況（沒有主賽事買入是一億起跳的）。
+export function pickBuyIn(ev) {
+  const n = Number(ev?.me_buyin);
+  const ccy = String(ev?.currency ?? "").trim().toUpperCase();
+  if (!Number.isFinite(n) || n <= 0 || n >= 100_000_000 || !/^[A-Z]{3}$/.test(ccy)) {
+    return { "ME Buy-in": "", Currency: "" };
+  }
+  return { "ME Buy-in": String(n), Currency: ccy };
+}
+
+export function formatLocation(location) {
+  const raw = String(location ?? "").trim();
+  if (!raw) return "";
+  const parts = raw.split(",").map((p) => p.trim()).filter(Boolean);
+  const countryEn = parts[parts.length - 1] ?? "";
+  const cityEn = parts.length > 1 ? parts.slice(0, -1).join(", ") : "";
+
+  const hit = ZH_COUNTRY[countryEn.toLowerCase()];
+  if (!hit) return raw; // 對照表沒有的國家就原樣保留英文，不要生出半殘的雙語字串
+  const [zhCountry, enCountry] = hit;
+  const zhCity = ZH_CITY[cityEn.toLowerCase()] ?? "";
+
+  const en = cityEn ? `${cityEn}, ${enCountry}` : enCountry;
+  return `${zhCountry} ${zhCity}\n${en}`;
 }
 
 // 有些主辦站的列表只寫「2026 Sapporo #02」，品牌名放在頁面別處，抽出來的名稱單獨看不懂
@@ -842,8 +908,7 @@ async function main() {
         "End Date": String(ev.end_date ?? "").trim() || String(ev.start_date ?? "").trim(),
         "Location": String(ev.location ?? "").trim(),
         "Tournament": applyBrand(ev.tournament, src.brand),
-        "ME Buy-in": "",
-        "Currency": "",
+        ...pickBuyIn(ev),
         "Handbook URL": cleanLink(ev.detail_url, blacklist),
         _tier: src.tier,
         _src: src.name.split(" ")[0],
@@ -1008,6 +1073,7 @@ async function main() {
     for (const ev of toAppend) {
       const entry = ev["Handbook URL"];
       if (!entry) continue;
+      if (ev["ME Buy-in"]) continue; // 列表頁已經抓到買入了，不用再花一次呼叫
       if (dailyQuotaGone) {
         console.warn("  Gemini 額度已用完，其餘的買入金額全部留白（賽事本身照樣寫入）");
         break;
@@ -1048,6 +1114,8 @@ async function main() {
   const srcNote = new Map();
   for (const ev of toAppend) {
     srcNote.set(ev, ev._srcs);
+    // 地點改成 Wei 手填的雙語格式。放在最後才轉，因為地區規則和去重都是用英文比對的
+    ev.Location = formatLocation(ev.Location);
     delete ev._tier;
     delete ev._src;
     delete ev._srcs;

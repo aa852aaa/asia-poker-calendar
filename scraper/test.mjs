@@ -7,6 +7,7 @@ import {
   mergeGroup, detectDateChange, validateEvent, colLetter, htmlToText,
   fixCountry, fixCity, isDuplicateConservative, pickReplacementModel,
   applyBrand, festivalDays, isDailyQuotaError, packBatches, stripCancelMark, findSheetRow,
+  formatLocation, pickBuyIn,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -233,6 +234,34 @@ eq("名稱太短 → null（寧可不改）", findSheetRow("AP", sheetRows), nul
 eq("完全相同 → 對到那一列", findSheetRow("APT JEJU 2026", sheetRows)?._row, 2);
 eq("名稱相近 → 對得到", findSheetRow("GOP Incheon 2026", sheetRows)?._row, 20);
 eq("完全對不上 → null", findSheetRow("Some Unrelated Series 2026", sheetRows), null);
+
+console.log("\n【17】地點寫成 Wei 手填的雙語格式");
+// 對照組（實際從網站抓下來的既有列）：
+//   "台灣 台北\nTaipei, Taiwan" / "韓國 濟州島\nJeju, Korea" / "馬來西亞 \nMalaysia"
+eq("台北", formatLocation("Taipei, Taiwan"), "台灣 台北\nTaipei, Taiwan");
+eq("濟州（英文用 Korea，跟既有列一致）", formatLocation("Jeju, South Korea"), "韓國 濟州島\nJeju, Korea");
+eq("仁川", formatLocation("Incheon, South Korea"), "韓國 仁川\nIncheon, Korea");
+eq("馬尼拉", formatLocation("Manila, Philippines"), "菲律賓 馬尼拉\nManila, Philippines");
+eq("只有國家（沒城市）", formatLocation("Malaysia"), "馬來西亞 \nMalaysia");
+eq("河內", formatLocation("Hanoi, Vietnam"), "越南 河內\nHanoi, Vietnam");
+eq("澳門路氹", formatLocation("Cotai, Macau"), "澳門 路氹\nCotai, Macau");
+eq("巴哈馬天堂島", formatLocation("Paradise, Bahamas"), "巴哈馬 天堂島\nParadise, Bahamas");
+eq("城市不在對照表 → 中文只寫國家，英文保留城市",
+  formatLocation("Gangneung, South Korea"), "韓國 \nGangneung, Korea");
+eq("國家不在對照表 → 原樣保留英文，不生半殘的雙語",
+  formatLocation("Budva, Montenegro"), "Budva, Montenegro");
+eq("空字串", formatLocation(""), "");
+
+console.log("\n【18】列表頁直接抓到的買入（省一次詳情頁呼叫）");
+eq("正常值", pickBuyIn({ me_buyin: 35000, currency: "twd" }), { "ME Buy-in": "35000", Currency: "TWD" });
+eq("沒填 → 留白", pickBuyIn({}), { "ME Buy-in": "", Currency: "" });
+eq("null → 留白", pickBuyIn({ me_buyin: null, currency: "TWD" }), { "ME Buy-in": "", Currency: "" });
+eq("0 → 留白", pickBuyIn({ me_buyin: 0, currency: "TWD" }), { "ME Buy-in": "", Currency: "" });
+eq("一億以上（八成是把保證獎池當成買入）→ 留白",
+  pickBuyIn({ me_buyin: 100000000, currency: "KRW" }), { "ME Buy-in": "", Currency: "" });
+eq("幣別不是三碼 → 留白", pickBuyIn({ me_buyin: 5000, currency: "NT$" }), { "ME Buy-in": "", Currency: "" });
+eq("有金額沒幣別 → 留白（換算不了就別寫）",
+  pickBuyIn({ me_buyin: 5000, currency: "" }), { "ME Buy-in": "", Currency: "" });
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);
