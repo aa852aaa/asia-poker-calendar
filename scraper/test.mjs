@@ -7,7 +7,7 @@ import {
   mergeGroup, detectDateChange, validateEvent, colLetter, htmlToText,
   fixCountry, fixCity, isDuplicateConservative, pickReplacementModel,
   applyBrand, festivalDays, isDailyQuotaError, packBatches, stripCancelMark, findSheetRow,
-  formatLocation, pickBuyIn, seriesLink, detectBlankFills,
+  formatLocation, pickBuyIn, seriesLink, detectBlankFills, detailTargets,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -331,6 +331,38 @@ eq("舊值已經有中文 → 不動它",
   detectBlankFills(fresh, { ...sheetOld, Location: "韓國 濟州島\nJeju, Korea" })
     .some((f) => f.col === "Location"), false);
 eq("補上的欄位帶著列號", detectBlankFills(fresh, sheetOld)[0]?.row, 88);
+
+console.log("\n【21】詳情頁要抓哪些：新增的優先，再來是 3 個月內開賽、買入還空的既有列");
+const T0 = Date.parse("2026-09-11T00:00:00+08:00");
+const day = (n) => new Date(T0 + n * 86400_000).toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" });
+const ex = (row, t, start, buyin = "", url = "") => ({
+  _row: row, Tournament: t, "Start Date": day(start), "End Date": day(start + 7), "ME Buy-in": buyin, "Handbook URL": url,
+});
+const existingRows = [
+  ex(10, "Soon Blank", 20, "", "https://a.example/"),        // 20 天後開賽、買入空 → 要抓
+  ex(11, "Sooner Blank", 5, "", "https://b.example/"),       // 5 天後 → 要抓，而且排最前面
+  ex(12, "Far Blank", 120, "", "https://c.example/"),        // 120 天後 → 超過 3 個月，不抓
+  ex(13, "Soon Filled", 15, "35000", "https://d.example/"),  // 買入已有 → 不抓
+  ex(14, "Soon NoUrl", 10, "", ""),                          // 沒連結 → 抓不了
+  ex(15, "Ended", -30, "", "https://e.example/"),            // 已結束 → 不抓
+  ex(16, "[已取消] Soon", 12, "", "https://f.example/"),      // 已取消 → 不抓
+  ex(17, "Pending Url", 8, "", ""),                          // 這輪剛排入要補的連結 → 用那個
+];
+const pending = [{ row: 17, col: "Handbook URL", value: "https://g.example/" }];
+const newRows = [
+  { Tournament: "New A", "Handbook URL": "https://n1.example/", "ME Buy-in": "" },
+  { Tournament: "New B", "Handbook URL": "https://n2.example/", "ME Buy-in": "5000" }, // 列表頁已抓到 → 不用
+  { Tournament: "New C", "Handbook URL": "", "ME Buy-in": "" },                          // 沒連結 → 抓不了
+];
+const tg = detailTargets(newRows, existingRows, pending, T0);
+eq("順序：新增的在前，既有列依開賽日由近到遠",
+  tg.map((t) => t.name), ["New A", "Sooner Blank", "Pending Url", "Soon Blank"]);
+eq("已有買入 / 沒連結 / 太遠 / 已結束 / 已取消 都不在清單裡",
+  tg.some((t) => /Filled|NoUrl|Far|Ended|取消|New B|New C/.test(t.name)), false);
+eq("這輪剛排入要補的連結也算數", tg.find((t) => t.name === "Pending Url")?.url, "https://g.example/");
+eq("新增列帶著 ev 物件（結果要寫回去）", tg[0].kind === "new" && tg[0].ev?.Tournament, "New A");
+eq("既有列帶著 row 物件（要知道寫第幾列）", tg[1].kind === "existing" && tg[1].row?._row, 11);
+eq("沒有任何目標 → 空陣列", detailTargets([], [], [], T0), []);
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);

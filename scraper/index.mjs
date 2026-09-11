@@ -33,6 +33,7 @@ const MAX_NEW_PER_SOURCE = 30; // 單一來源單次最多抽出筆數（防 LLM
 const MAX_APPEND_TOTAL = 60; // 單次執行寫入總上限
 const MAX_DATE_SHIFT_DAYS = 45; // 改期偵測：日期差超過這個天數就不當成同一場的改期，只報不改
 const MAX_DETAIL_CALLS = 20; // 單輪最多抓幾個詳情頁補買入（守住 Gemini 免費額度）
+const DETAIL_LOOKAHEAD_DAYS = 90; // 既有列買入還是空的：只回頭抓「這幾天內開賽」的（報名費通常這時候才公布）
 const BATCH_CHAR_LIMIT = 120_000; // 一批合併送給 LLM 的文字上限
 const BATCH_MAX_SOURCES = 5; // 一批最多幾個來源
 // gemini-3.6-flash 免費層實測是每日 20 次（錯誤訊息裡的 limit: 20）。
@@ -909,6 +910,35 @@ export function detectBlankFills(merged, sheetRow) {
   return fills.map((f) => ({ ...f, row: sheetRow._row, tournament: sheetRow.Tournament }));
 }
 
+// 詳情頁要抓哪些：新增的列優先，再來是既有列裡買入還是空的、3 個月內開賽的（越快開賽越前面）。
+// 既有列用的是它自己那格的連結（或這輪剛排入要補的連結），不需要跟候選比對，所以沒有對錯列的風險。
+export function detailTargets(toAppend, existing, blankFills, todayTs) {
+  const blank = (v) => String(v ?? "").trim() === "";
+  const fresh = toAppend
+    .filter((ev) => !blank(ev["Handbook URL"]) && blank(ev["ME Buy-in"]))
+    .map((ev) => ({ kind: "new", ev, url: ev["Handbook URL"], name: ev.Tournament }));
+
+  const horizon = todayTs + DETAIL_LOOKAHEAD_DAYS * 86400_000;
+  const notEnded = todayTs - HIDE_ENDED_AFTER_DAYS * 86400_000;
+  const pendingUrl = (row) =>
+    blankFills.find((f) => f.row === row._row && f.col === "Handbook URL")?.value ?? "";
+
+  const soon = existing
+    .filter((r) => blank(r["ME Buy-in"]) && !String(r.Tournament ?? "").includes(CANCEL_MARK))
+    .map((r) => ({ r, s: parseYMD(r["Start Date"]), e: parseYMD(r["End Date"]) }))
+    .filter(({ s, e }) => s != null && s <= horizon && (e ?? s) >= notEnded)
+    .sort((a, b) => a.s - b.s)
+    .map(({ r }) => ({
+      kind: "existing",
+      row: r,
+      url: String(r["Handbook URL"] ?? "").trim() || pendingUrl(r),
+      name: r.Tournament,
+    }))
+    .filter((t) => /^https?:\/\//.test(t.url));
+
+  return [...fresh, ...soon];
+}
+
 // 改期偵測：既有列的日期 vs 主辦方（tier 1/2）現在公布的日期
 export function detectDateChange(merged, sheetRow) {
   if (!sheetRow) return null;
@@ -1160,45 +1190,61 @@ async function main() {
 
   // ── 第 3 段：抓官網詳情頁補買入金額與專屬連結 ──
   // 這段是加值，不是必要：抓不到就讓買入留白，絕不影響前面已經確定的賽事資料。
-  if (toAppend.length) {
-    console.log(`\n=== 補買入金額與原生連結（${toAppend.length} 筆）===`);
+  // 目標有兩種，共用同一個額度：
+  //   1. 這輪要新增的列（優先）
+  //   2. 既有列裡買入還是空的、而且 3 個月內開賽的——報名費通常就是這時候公布，
+  //      第一次抓到時還沒有，不回頭抓就永遠是空的
+  const targets = detailTargets(toAppend, existing, blankFills, todayTs);
+  if (targets.length) {
+    const nNew = targets.filter((t) => t.kind === "new").length;
+    console.log(`\n=== 補買入金額與原生連結（新增 ${nNew} 筆 + 既有列 ${targets.length - nNew} 筆）===`);
     let detailCalls = 0;
-    for (const ev of toAppend) {
-      const entry = ev["Handbook URL"];
-      if (!entry) continue;
-      if (ev["ME Buy-in"]) continue; // 列表頁已經抓到買入了，不用再花一次呼叫
+    const host = (u) => new URL(u).hostname.replace(/^www\./, "");
+    for (const t of targets) {
       if (dailyQuotaGone) {
-        console.warn("  Gemini 額度已用完，其餘的買入金額全部留白（賽事本身照樣寫入）");
+        console.warn("  Gemini 額度已用完，其餘的買入金額留白（賽事本身照樣寫入）");
         break;
       }
       if (detailCalls >= MAX_DETAIL_CALLS) {
-        console.warn(`  已達單輪詳情頁上限 ${MAX_DETAIL_CALLS} 筆，其餘的買入金額留白`);
+        console.warn(`  已達單輪詳情頁上限 ${MAX_DETAIL_CALLS} 筆，其餘的留給下次`);
         break;
       }
       if (geminiCalls >= GEMINI_DAILY_BUDGET) {
-        console.warn(
-          `  已用掉 ${geminiCalls} 次 Gemini 呼叫（每日上限 20），停止補買入金額把額度留給下次`,
-        );
+        console.warn(`  已用掉 ${geminiCalls} 次 Gemini 呼叫（每日上限 20），其餘的留給下次`);
         break;
       }
       try {
-        const text = htmlToText(await fetchPage(entry), entry);
+        const text = htmlToText(await fetchPage(t.url), t.url);
         if (text.length < 300) continue;
         await sleep(GEMINI_CALL_GAP_MS);
         detailCalls++;
-        const d = await geminiJSON(detailPrompt(ev.Tournament, text), DETAIL_SCHEMA);
+        const d = await geminiJSON(detailPrompt(t.name, text), DETAIL_SCHEMA);
 
-        const buyin = Number(d?.me_buyin);
-        if (Number.isFinite(buyin) && buyin > 0 && buyin < 100_000_000) {
-          ev["ME Buy-in"] = String(buyin);
-          ev["Currency"] = String(d?.currency ?? "").trim().toUpperCase();
-        }
+        const got = pickBuyIn(d);
         // 專屬頁面連結只接受同網域的（避免被導到別的地方）
         const hb = cleanLink(d?.handbook_url, blacklist);
-        const host = (u) => new URL(u).hostname.replace(/^www\./, "");
-        if (hb && host(hb) === host(entry)) ev["Handbook URL"] = hb;
+        const deeper = hb && host(hb) === host(t.url) && hb !== t.url ? hb : "";
+
+        if (t.kind === "new") {
+          if (got["ME Buy-in"]) Object.assign(t.ev, got);
+          if (deeper) t.ev["Handbook URL"] = deeper;
+        } else {
+          // 既有列：只補空的。買入和幣別一起補；連結只在表上那格還是空的時候補（含這輪剛排入的）
+          const add = (col, value) => {
+            const i = blankFills.findIndex((f) => f.row === t.row._row && f.col === col);
+            const entry = { row: t.row._row, tournament: t.row.Tournament, col, value };
+            if (i >= 0) blankFills[i] = entry;
+            else blankFills.push(entry);
+          };
+          if (got["ME Buy-in"]) {
+            add("ME Buy-in", got["ME Buy-in"]);
+            add("Currency", got.Currency);
+            console.log(`  📝 第 ${t.row._row} 列 ${t.row.Tournament}｜買入 ← ${got.Currency} ${got["ME Buy-in"]}`);
+          }
+          if (deeper && !String(t.row["Handbook URL"] ?? "").trim()) add("Handbook URL", deeper);
+        }
       } catch (e) {
-        console.warn(`  詳情頁失敗（買入留白）：${ev.Tournament} — ${e.message}`);
+        console.warn(`  詳情頁失敗（買入留白）：${t.name} — ${e.message}`);
       }
     }
   }
