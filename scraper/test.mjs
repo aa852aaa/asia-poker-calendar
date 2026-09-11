@@ -246,6 +246,8 @@ eq("只有國家（沒城市）", formatLocation("Malaysia"), "馬來西亞 \nMa
 eq("河內", formatLocation("Hanoi, Vietnam"), "越南 河內\nHanoi, Vietnam");
 eq("澳門路氹", formatLocation("Cotai, Macau"), "澳門 路氹\nCotai, Macau");
 eq("巴哈馬天堂島", formatLocation("Paradise, Bahamas"), "巴哈馬 天堂島\nParadise, Bahamas");
+eq("城市國家同名 → 只寫國家（不要「新加坡 新加坡」）", formatLocation("Singapore, Singapore"), "新加坡 \nSingapore");
+eq("澳門, 澳門 同理", formatLocation("Macau, Macau"), "澳門 \nMacau");
 eq("城市不在對照表 → 中文只寫國家，英文保留城市",
   formatLocation("Gangneung, South Korea"), "韓國 \nGangneung, Korea");
 eq("國家不在對照表 → 原樣保留英文，不生半殘的雙語",

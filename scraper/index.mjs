@@ -268,7 +268,7 @@ let geminiModel = GEMINI_MODEL;
 // 每日額度用完後，這輪剩下的呼叫直接放棄，不要每一筆都再空轉重試一次
 // （上一輪就是這樣，每筆失敗要等 2 分鐘，整輪多花好幾分鐘還是拿不到東西）
 let dailyQuotaGone = false;
-let geminiCalls = 0; // 本輪已成功呼叫幾次，用來守住每日額度
+let geminiCalls = 0; // 本輪已「嘗試」幾次（含失敗的），用來守住每日額度
 
 // 429 分兩種：每分鐘上限（等一下就會恢復）和每日上限（今天不用再試了）。
 // Google 會在錯誤內容裡寫是哪一種，看不出來時當成每分鐘、還可以再等。
@@ -288,7 +288,12 @@ async function geminiJSON(prompt, schema) {
     },
   };
 
-  for (let attempt = 1; attempt <= 4; attempt++) {
+  // 每一次嘗試都算進每日 20 次額度——包括被 Google 自己 503 打回來的。
+  // 2026-09-11 實測：兩輪合計 20 次嘗試（其中 9 次是 503 重試）就撞牆，一次成功的都沒多。
+  // 所以計數放在發請求之前，不是成功之後。
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    geminiCalls++;
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${GEMINI_API_KEY}`;
     const res = await fetch(url, {
       method: "POST",
@@ -308,8 +313,11 @@ async function geminiJSON(prompt, schema) {
       continue;
     }
     if (res.status >= 500) {
-      console.warn(`Gemini ${res.status}，第 ${attempt} 次重試前等 30 秒...`);
-      await sleep(30_000);
+      // 503 是 Google 那邊過載，多等一點再試比較容易過；每次重試都燒額度，所以次數壓在 3
+      if (attempt < MAX_ATTEMPTS) {
+        console.warn(`Gemini ${res.status}，等 60 秒後第 ${attempt + 1} 次嘗試...`);
+        await sleep(60_000);
+      }
       continue;
     }
     if (res.status === 404) {
@@ -326,10 +334,9 @@ async function geminiJSON(prompt, schema) {
     const data = await res.json();
     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) throw new Error("Gemini 回應沒有內容");
-    geminiCalls++;
     return JSON.parse(text);
   }
-  throw new Error("Gemini 重試 3 次仍失敗");
+  throw new Error(`Gemini 連續 ${MAX_ATTEMPTS} 次都失敗（Google 那邊過載）`);
 }
 
 const LISTING_SCHEMA = {
@@ -692,7 +699,9 @@ export function formatLocation(location) {
   if (!raw) return "";
   const parts = raw.split(",").map((p) => p.trim()).filter(Boolean);
   const countryEn = parts[parts.length - 1] ?? "";
-  const cityEn = parts.length > 1 ? parts.slice(0, -1).join(", ") : "";
+  let cityEn = parts.length > 1 ? parts.slice(0, -1).join(", ") : "";
+  // 城市國家同名（Singapore, Singapore／Macau, Macau）就當成只有國家，不要寫成「新加坡 新加坡」
+  if (cityEn.toLowerCase() === countryEn.toLowerCase()) cityEn = "";
 
   const hit = ZH_COUNTRY[countryEn.toLowerCase()];
   if (!hit) return raw; // 對照表沒有的國家就原樣保留英文，不要生出半殘的雙語字串
