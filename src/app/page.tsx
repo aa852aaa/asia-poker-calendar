@@ -27,7 +27,7 @@ export default async function Page() {
 
   if (rows === null) {
     return (
-      <main style={{ padding: 24, ...font }}>
+      <main className="page" style={font}>
         {title}
         <p style={{ marginTop: 12 }}>❌ 賽程載入失敗：{errorMessage}</p>
         <p style={{ marginTop: 8 }}>
@@ -38,7 +38,7 @@ export default async function Page() {
   }
 
   return (
-    <main style={{ padding: 24, ...font }}>
+    <main className="page" style={font}>
       {title}
       <ScheduleTable rows={rows} />
     </main>

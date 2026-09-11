@@ -63,6 +63,13 @@ body {
   background: var(--bg);
   color: var(--text);
 }
+/* ===== 頁面寬度：寬螢幕上把內容收在中間，不然表格被拉開撐滿整個顯示器，左右資訊離太遠一眼看不完 ===== */
+.page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
 /* ===== 標題 ===== */
 .siteTitle {
   font-size: 24px;
@@ -169,14 +176,13 @@ body {
   border-color: var(--chip-active-bg);
 }
 
-/* 表格：欄寬以內容最大寬決定 + 橫向滑動 */
+/* 表格：跟控制列同寬（容器 900px 內），多出來的寬度只給賽事欄吸收；比容器寬時橫向滑動 */
 .tableWrap {
   overflow-x: auto;
 }
 .table {
   border-collapse: collapse;
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
 }
 th,
 td {
