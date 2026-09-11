@@ -18,10 +18,17 @@ export default async function Page() {
     errorMessage = e instanceof Error ? e.message : "Unknown error";
   }
 
+  const title = (
+    <h1 className="siteTitle">
+      台灣撲克玩家行事曆
+      <span className="siteTitleEn">Taiwan Poker Player Calendar</span>
+    </h1>
+  );
+
   if (rows === null) {
     return (
       <main style={{ padding: 24, ...font }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700 }}>Asia Poker Calendar</h1>
+        {title}
         <p style={{ marginTop: 12 }}>❌ 賽程載入失敗：{errorMessage}</p>
         <p style={{ marginTop: 8 }}>
           （通常是 Vercel 沒設定 <code>SHEET_CSV_URL</code>，或 Google Sheets 暫時無法連線，稍後重新整理再試）
@@ -32,7 +39,7 @@ export default async function Page() {
 
   return (
     <main style={{ padding: 24, ...font }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700 }}>Asia Poker Calendar</h1>
+      {title}
       <ScheduleTable rows={rows} />
     </main>
   );
