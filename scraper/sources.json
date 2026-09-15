@@ -110,6 +110,14 @@
       "location": "Taipei, Taiwan"
     },
     {
+      "tier": 2,
+      "name": "WWP Win Win Poker 台北",
+      "type": "html",
+      "url": "https://winwinpoker.com.tw/",
+      "location": "Taipei, Taiwan",
+      "note": "台北中山區的場館，自辦 WWP Series。首頁是中文公告（「WWP S5 9/24 - 10/11」這種，沒寫年份要靠上下文推）"
+    },
+    {
       "tier": 3,
       "name": "PokerCalendar.asia API",
       "type": "json",
@@ -260,6 +268,13 @@
         "APL"
       ],
       "url": "https://acepokerleague.com/"
+    },
+    {
+      "match": [
+        "Win Win Poker",
+        "WWP"
+      ],
+      "url": "https://winwinpoker.com.tw/"
     },
     {
       "match": [
