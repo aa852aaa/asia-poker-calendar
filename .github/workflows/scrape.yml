@@ -19,6 +19,7 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 45 # 額度大了之後詳情頁會抓比較多，但不該超過這個；超過代表卡住了
     steps:
       - uses: actions/checkout@v4
 
@@ -42,8 +43,12 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
           SHEET_TAB: ${{ secrets.SHEET_TAB }}
-          # 選填：想指定 Gemini 模型就加這個 secret，不設就用程式裡的預設
-          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+          # 模型與額度參數放 repository variables（Settings → Secrets and variables → Actions → Variables），
+          # 不是 secrets：這些不是機密，放 variables 才會顯示在 log 裡、也能在 GitHub 網頁上直接改。
+          # 沒設的話程式用預設值（gemini-3.6-flash / 每日 20 / 詳情頁 20）。
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          GEMINI_DAILY_LIMIT: ${{ vars.GEMINI_DAILY_LIMIT }}
+          MAX_DETAIL_CALLS: ${{ vars.MAX_DETAIL_CALLS }}
           DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '1' || '0' }}
           # 排程執行一律開啟改期自動更新；手動觸發時看上面的勾選。
           # 要關掉排程的自動更新，把下面的 'workflow_dispatch' 判斷式整段換成 '0' 即可。

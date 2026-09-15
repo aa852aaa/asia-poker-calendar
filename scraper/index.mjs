@@ -32,13 +32,20 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 const MAX_NEW_PER_SOURCE = 30; // 單一來源單次最多抽出筆數（防 LLM 幻覺灌爆表格）
 const MAX_APPEND_TOTAL = 60; // 單次執行寫入總上限
 const MAX_DATE_SHIFT_DAYS = 45; // 改期偵測：日期差超過這個天數就不當成同一場的改期，只報不改
-const MAX_DETAIL_CALLS = 20; // 單輪最多抓幾個詳情頁補買入（守住 Gemini 免費額度）
+// 額度相關的參數跟著模型走，所以做成環境變數（GitHub 的 repository variables），換模型不用改 code：
+//   GEMINI_DAILY_LIMIT  該模型免費層的每日上限。gemini-3.6-flash 實測 20；gemini-3.5-flash-lite 是 500
+//   MAX_DETAIL_CALLS    單輪最多抓幾個詳情頁補買入
+const envInt = (name, fallback) => {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
+const GEMINI_DAILY_LIMIT = envInt("GEMINI_DAILY_LIMIT", 20);
+const MAX_DETAIL_CALLS = envInt("MAX_DETAIL_CALLS", 20);
 const DETAIL_LOOKAHEAD_DAYS = 90; // 既有列買入還是空的：只回頭抓「這幾天內開賽」的（報名費通常這時候才公布）
 const BATCH_CHAR_LIMIT = 120_000; // 一批合併送給 LLM 的文字上限
 const BATCH_MAX_SOURCES = 5; // 一批最多幾個來源
-// gemini-3.6-flash 免費層實測是每日 20 次（錯誤訊息裡的 limit: 20）。
-// 抽取和去重是必要的，詳情頁補買入是加值，所以額度快用完時先犧牲詳情頁。
-const GEMINI_DAILY_BUDGET = 18;
+// 抽取和去重是必要的，詳情頁補買入是加值，所以額度快用完時先犧牲詳情頁。留 10% 餘裕給重試。
+const GEMINI_DAILY_BUDGET = Math.max(4, Math.floor(GEMINI_DAILY_LIMIT * 0.9));
 const LONG_FESTIVAL_DAYS = 21; // 超過這個天數就在預覽標 ⚠️ 提醒人看一眼（不擋，只提醒）
 const CANCEL_MARK = "[已取消]"; // 來源公布取消時，加在既有列的賽事名稱前面（不刪除該列）
 const PAGE_TEXT_LIMIT = 350_000; // 餵給 LLM 的每頁文字上限（字元）
@@ -1035,7 +1042,8 @@ async function main() {
   const client = sheetsClient();
   const tab = await resolveTabName(client);
   const { headers, rows: existing } = await getSheetRows(client, tab);
-  console.log(`Sheet 分頁「${tab}」現有 ${existing.length} 列\n`);
+  console.log(`Sheet 分頁「${tab}」現有 ${existing.length} 列`);
+  console.log(`模型 ${GEMINI_MODEL}｜每日上限 ${GEMINI_DAILY_LIMIT}（守門 ${GEMINI_DAILY_BUDGET}）｜詳情頁上限 ${MAX_DETAIL_CALLS}\n`);
 
   // ── 第 1 段：各來源抽取 ──
   const candidates = [];
@@ -1248,7 +1256,7 @@ async function main() {
         break;
       }
       if (geminiCalls >= GEMINI_DAILY_BUDGET) {
-        console.warn(`  已用掉 ${geminiCalls} 次 Gemini 呼叫（每日上限 20），其餘的留給下次`);
+        console.warn(`  已用掉 ${geminiCalls} 次 Gemini 呼叫（每日上限 ${GEMINI_DAILY_LIMIT}），其餘的留給下次`);
         break;
       }
       try {
