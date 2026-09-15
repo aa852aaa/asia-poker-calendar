@@ -8,7 +8,7 @@ import {
   fixCountry, fixCity, isDuplicateConservative, pickReplacementModel,
   applyBrand, festivalDays, isDailyQuotaError, packBatches, stripCancelMark, findSheetRow,
   formatLocation, pickBuyIn, seriesLink, detectBlankFills, detailTargets, isTransientSheetsError,
-  detectLinkFixes,
+  detectLinkFixes, needsBrowser, buildTodoList,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -283,8 +283,10 @@ eq("JOPT 2027 Fukuoka #01（補過品牌才對得到）", seriesLink("JOPT 2027 
   "https://japanopenpoker.com/");
 eq("Jeju Poker Festival 2026 → Red Dragon（名稱沒有 RDPT 字樣）",
   seriesLink("Jeju Poker Festival 2026", SL), "https://playreddragon.com/series-schedule.html");
-eq("GLPC Ultimate Showdown 2026", seriesLink("GLPC Ultimate Showdown 2026", SL),
-  "https://grandloyal.com.vn/");
+eq("GLPC Ultimate Showdown 2026（官網已更正為 grandloyal.vn）", seriesLink("GLPC Ultimate Showdown 2026", SL),
+  "https://grandloyal.vn/");
+eq("Quads Poker Championship Winter 2026", seriesLink("Quads Poker Championship Winter 2026", SL),
+  "https://quadspoker.vn/series");
 eq("RPT Championship Grand Final（官網已更正為 royal-poker.com）", seriesLink("RPT Championship Grand Final", SL),
   "https://royal-poker.com/en");
 eq("AJPC Samurai Circuit - Incheon 2026 III", seriesLink("AJPC Samurai Circuit - Incheon 2026 III", SL),
@@ -292,7 +294,7 @@ eq("AJPC Samurai Circuit - Incheon 2026 III", seriesLink("AJPC Samurai Circuit -
 eq("Poker Dream 26 Malaysia（官網 JS 驗證抓不到，但連結可以給）",
   seriesLink("Poker Dream 26 Malaysia", SL), "https://pokerdream-live.com/");
 eq("對照表沒有的系列 → 留空，不亂給連結",
-  seriesLink("Quads Poker Championship Winter 2026", SL), "");
+  seriesLink("Super Cup 7 Incheon 2026", SL), "");
 eq("空名稱 → 留空", seriesLink("", SL), "");
 ok("每個系列的網址都不是彙整站",
   SL.every((e) => !/pokercalendar\.asia|somuchpoker\.com|thehendonmob\.com/i.test(e.url)));
@@ -399,6 +401,55 @@ eq("前綴相同但不完全一樣的不動", fx.some((f) => f.row === 70), fals
 eq("沒有更正表 → 空陣列", detectLinkFixes(sheetLinks, {}), []);
 eq("更正表是 undefined 也不會爆", detectLinkFixes(sheetLinks, undefined), []);
 ok("更正的值本身不是彙整站", Object.values(LF).every((v) => !/pokercalendar\.asia|somuchpoker\.com/i.test(v)));
+
+console.log("\n【24】哪些網域要用真瀏覽器（內容靠 JS 載入的）");
+const BH = new Set(srcJson.browserHosts);
+ok("RPT 官網 → 瀏覽器", needsBrowser("https://royal-poker.com/en", BH));
+ok("Red Dragon 內頁 → 瀏覽器（含 www）", needsBrowser("https://www.playreddragon.com/RDPT/jeju-2026.html", BH));
+ok("子網域也算", needsBrowser("https://live.tritonpokerseries.com/x", BH));
+ok("APT 官網 → 純 fetch 就好", !needsBrowser("https://www.theasianpokertour.com/series", BH));
+ok("壞掉的網址 → false 不會爆", !needsBrowser("not a url", BH));
+ok("每個瀏覽器來源的網域都在 browserHosts 裡",
+  srcJson.sources.filter((s) => s.browser).every((s) => needsBrowser(s.url, BH)));
+
+console.log("\n【25】待補清單：買入抓不到的列 + 為什麼");
+const T1 = Date.parse("2026-09-16T00:00:00+08:00");
+const d = (n) => new Date(T1 + n * 86400_000).toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" });
+const mkRow = (row, t, start, extra = {}) => ({
+  _row: row, Tournament: t, "Start Date": d(start), "End Date": d(start + 7),
+  "ME Buy-in": "", Location: "韓國 濟州島\nJeju, Korea", "Handbook URL": "", ...extra,
+});
+const rowsForTodo = [
+  mkRow(10, "Has BuyIn", 5, { "ME Buy-in": "1000" }),                       // 有買入 → 不列
+  mkRow(11, "Filled This Run", 5, { "Handbook URL": "https://a.example/" }), // 這輪剛補到 → 不列
+  mkRow(12, "[已取消] Gone", 5, { "Handbook URL": "https://a.example/" }),   // 已取消 → 不列
+  mkRow(13, "Ended", -30, { "Handbook URL": "https://a.example/" }),         // 已結束 → 不列
+  mkRow(14, "No Link", 5),                                                   // 沒連結
+  mkRow(15, "Poker Dream 28", 5, { "Handbook URL": "https://pokerdream-live.com/" }), // 人機驗證
+  mkRow(16, "RPT Something", 5, { "Handbook URL": "https://royal-poker.com/en" }),    // 這輪：頁面沒列
+  mkRow(17, "Blocked", 5, { "Handbook URL": "https://okada.example/" }),              // 這輪：連不上
+  mkRow(18, "Far Future", 200, { "Handbook URL": "https://a.example/" }),             // 太遠
+  mkRow(19, "Not Reached", 40, { "Handbook URL": "https://a.example/" }),             // 沒輪到
+  mkRow(20, "Pending Link", 5),                                                        // 這輪剛排入連結但沒抓到買入
+];
+const fills = [
+  { row: 11, col: "ME Buy-in", value: "500" }, { row: 11, col: "Currency", value: "USD" },
+  { row: 20, col: "Handbook URL", value: "https://b.example/" },
+];
+const outcome = new Map([[16, "官網頁面沒列主賽買入"], [17, "從 GitHub 連不上官網（HTTP 403），可能擋機房 IP"]]);
+const todo = buildTodoList(rowsForTodo, fills, outcome, T1);
+const byRow = Object.fromEntries(todo.map((t) => [t.row, t.why]));
+eq("列出的是這幾筆", todo.map((t) => t.row).sort((a, b) => a - b), [14, 15, 16, 17, 18, 19, 20]);
+ok("沒連結 → 說要補連結", /沒有官網連結/.test(byRow[14]));
+ok("人機驗證的網域 → 說要人工", /人機驗證|要登入/.test(byRow[15]));
+eq("這輪抓過但頁面沒列 → 照實說", byRow[16], "官網頁面沒列主賽買入");
+ok("這輪連不上 → 說可能擋 IP", /連不上/.test(byRow[17]));
+ok("開賽還早 → 說之後會自動抓", /開賽還早/.test(byRow[18]));
+ok("沒輪到 → 說下次再試", /下次再試/.test(byRow[19]));
+ok("這輪剛排入連結的也算有連結（不會說沒連結）", !/沒有官網連結/.test(byRow[20]));
+ok("依開賽日排序", todo.every((t, i) => i === 0 || todo[i - 1].start <= t.start));
+eq("地點只取中文那行", todo[0].location, "韓國 濟州島");
+eq("空表 → 空清單", buildTodoList([], [], new Map(), T1), []);
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);

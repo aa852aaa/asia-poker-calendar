@@ -31,6 +31,11 @@ jobs:
         run: npm ci
         working-directory: scraper
 
+      # 有些主辦站的內容靠 JS 載入（RPT、Triton、Red Dragon 內頁），要真瀏覽器才抓得到
+      - name: 安裝 Chromium（給 Playwright 用）
+        run: npx playwright install --with-deps chromium
+        working-directory: scraper
+
       - name: 純邏輯測試
         run: node test.mjs
         working-directory: scraper

@@ -186,9 +186,58 @@ export function isDuplicateConservative(ev, existing) {
   return false;
 }
 
+// ---------- 真瀏覽器（Playwright）----------
+// 有些站的內容靠 JS 載入，純 fetch 只拿到空殼（RPT 官網只有「Royal Poker」11 個字、KPC 只有導覽列）。
+// sources.json 的 browserHosts 列出這些網域，列表抓取和詳情頁補買入都改用真瀏覽器。
+// Playwright 用 dynamic import 延後載入：測試和大多數來源都不需要它。
+let browserHosts = new Set();
+let browserPromise = null;
+
+export function needsBrowser(url, hosts = browserHosts) {
+  try {
+    const h = new URL(url).hostname.replace(/^www\./, "");
+    return [...hosts].some((b) => h === b || h.endsWith("." + b));
+  } catch {
+    return false;
+  }
+}
+
+async function getBrowser() {
+  if (!browserPromise) {
+    browserPromise = import("playwright").then(({ chromium }) => chromium.launch({ headless: true }));
+  }
+  return browserPromise;
+}
+
+async function closeBrowser() {
+  if (!browserPromise) return;
+  try {
+    (await browserPromise).close();
+  } catch {
+    /* 關不掉也無所謂，程式要結束了 */
+  }
+  browserPromise = null;
+}
+
+async function fetchWithBrowser(url) {
+  const browser = await getBrowser();
+  const ctx = await browser.newContext({ userAgent: UA, locale: "en-US", viewport: { width: 1280, height: 900 } });
+  const page = await ctx.newPage();
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    // 等網路安靜下來代表 SPA 把資料拉完了；有些站一直有背景請求，等不到就算了，拿當下的內容
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+    await page.waitForTimeout(1_000);
+    return await page.content();
+  } finally {
+    await ctx.close();
+  }
+}
+
 // ---------- 抓網頁 ----------
 
 async function fetchPage(url, { json = false } = {}) {
+  if (!json && needsBrowser(url)) return fetchWithBrowser(url);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30_000);
   try {
@@ -677,6 +726,7 @@ async function loadSources() {
     }
   }
   out.sort((a, b) => a.tier - b.tier);
+  browserHosts = new Set((raw.browserHosts ?? []).map((h) => String(h).toLowerCase().replace(/^www\./, "")));
   return { sources: out, blacklist, seriesLinks: raw.seriesLinks ?? [], linkFixes: raw.linkFixes ?? {} };
 }
 
@@ -984,6 +1034,86 @@ export function detailTargets(toAppend, existing, blankFills, todayTs) {
   return [...fresh, ...soon];
 }
 
+// ---------- 待補清單 ----------
+// 爬蟲補不到的買入，整理成一份清單寫進 Sheet 的「AI_待補」分頁，讓 Wei 照清單人工填。
+// 把「找」的工作自動化、「填」的工作留給人——這是抓不到的資料的兜底。
+// 在主分頁填好買入，下一輪這一列就會從清單消失。
+const TODO_TAB = "AI_待補";
+// 這些網域人機驗證或要登入，爬蟲永遠抓不到，清單上直接講明要人工
+const MANUAL_ONLY_HOSTS = /facebook\.com|pokerdream-live\.com|thehendonmob\.com/i;
+
+export function buildTodoList(existing, blankFills, detailOutcome, todayTs) {
+  const blank = (v) => String(v ?? "").trim() === "";
+  const filledNow = new Set(blankFills.filter((f) => f.col === "ME Buy-in").map((f) => f.row));
+  const pendingLink = (r) => blankFills.find((f) => f.row === r._row && f.col === "Handbook URL")?.value ?? "";
+  const notEnded = todayTs - HIDE_ENDED_AFTER_DAYS * 86400_000;
+  const horizon = todayTs + DETAIL_LOOKAHEAD_DAYS * 86400_000;
+
+  const out = [];
+  for (const r of existing) {
+    if (!blank(r["ME Buy-in"]) || filledNow.has(r._row)) continue;
+    if (String(r.Tournament ?? "").includes(CANCEL_MARK)) continue;
+    const s = parseYMD(r["Start Date"]);
+    const e = parseYMD(r["End Date"]) ?? s;
+    if (s == null || e == null || e < notEnded) continue;
+
+    const link = String(r["Handbook URL"] ?? "").trim() || pendingLink(r);
+    let why;
+    if (!link) why = "沒有官網連結，無從抓取——請補連結或直接填買入";
+    else if (MANUAL_ONLY_HOSTS.test(link)) why = "官網有人機驗證或要登入，爬蟲抓不到——請人工查";
+    else if (detailOutcome.has(r._row)) why = detailOutcome.get(r._row) || "";
+    else if (s > horizon) why = `開賽還早（超過 ${DETAIL_LOOKAHEAD_DAYS} 天），之後會自動抓`;
+    else why = "本輪沒輪到，下次再試";
+    if (why === "") continue; // 這輪補到了
+
+    out.push({
+      row: r._row,
+      tournament: r.Tournament,
+      start: r["Start Date"],
+      location: String(r.Location ?? "").split("\n")[0].trim(),
+      link,
+      why,
+    });
+  }
+  out.sort((a, b) => String(a.start).localeCompare(String(b.start)));
+  return out;
+}
+
+async function ensureTab(client, title) {
+  const meta = await client.request({
+    url: `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets.properties.title`,
+  });
+  const titles = (meta.data?.sheets ?? []).map((s) => s.properties?.title);
+  if (titles.includes(title)) return;
+  await client.request({
+    url: `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`,
+    method: "POST",
+    data: { requests: [{ addSheet: { properties: { title } } }] },
+  });
+  console.log(`  已建立分頁「${title}」`);
+}
+
+async function writeTodoTab(client, todo, when) {
+  await ensureTab(client, TODO_TAB);
+  const range = encodeURIComponent(TODO_TAB);
+  const header = [
+    [`此分頁由爬蟲每輪重寫（${when}），請勿在這裡填資料。在「主分頁」填好買入，下一輪這一列就會消失。`],
+    [],
+    ["主分頁列號", "開始", "賽事", "地點", "官網連結", "為什麼抓不到"],
+  ];
+  const body = todo.map((t) => [t.row, t.start, t.tournament, t.location, t.link, t.why]);
+  await client.request({
+    url: `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${range}!A1:Z1000:clear`,
+    method: "POST",
+  });
+  await client.request({
+    url: `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${range}!A1?valueInputOption=RAW`,
+    method: "PUT",
+    data: { values: [...header, ...body] },
+  });
+  return body.length;
+}
+
 // 爬蟲以前寫錯、後來查明的連結（sources.json 的 linkFixes）：既有列的 Handbook URL
 // 完全等於已知錯值時換成正確的。這不需要跟候選比對——掃整張表，只認「一模一樣」的值，
 // 所以 Wei 手填的連結不會被誤改。（RPT 的 royalpokerclub.vn → FB 粉專 就是第一個案例）
@@ -1259,27 +1389,28 @@ async function main() {
   //   2. 既有列裡買入還是空的、而且 3 個月內開賽的——報名費通常就是這時候公布，
   //      第一次抓到時還沒有，不回頭抓就永遠是空的
   const targets = detailTargets(toAppend, existing, blankFills, todayTs);
+  // 每一筆既有列的結果：row → 原因字串（空字串 = 補到了）。給後面的「待補清單」用
+  const detailOutcome = new Map();
   if (targets.length) {
     const nNew = targets.filter((t) => t.kind === "new").length;
     console.log(`\n=== 補買入金額與原生連結（新增 ${nNew} 筆 + 既有列 ${targets.length - nNew} 筆）===`);
     let detailCalls = 0;
     const host = (u) => new URL(u).hostname.replace(/^www\./, "");
+    let stopped = "";
     for (const t of targets) {
-      if (dailyQuotaGone) {
-        console.warn("  Gemini 額度已用完，其餘的買入金額留白（賽事本身照樣寫入）");
-        break;
-      }
-      if (detailCalls >= MAX_DETAIL_CALLS) {
-        console.warn(`  已達單輪詳情頁上限 ${MAX_DETAIL_CALLS} 筆，其餘的留給下次`);
-        break;
-      }
-      if (geminiCalls >= GEMINI_DAILY_BUDGET) {
-        console.warn(`  已用掉 ${geminiCalls} 次 Gemini 呼叫（每日上限 ${GEMINI_DAILY_LIMIT}），其餘的留給下次`);
-        break;
+      if (dailyQuotaGone) stopped = "本輪額度用完，下次再試";
+      else if (detailCalls >= MAX_DETAIL_CALLS) stopped = `本輪已抓 ${MAX_DETAIL_CALLS} 筆詳情頁，下次再試`;
+      else if (geminiCalls >= GEMINI_DAILY_BUDGET) stopped = "本輪額度用完，下次再試";
+      if (stopped) {
+        if (t.kind === "existing") detailOutcome.set(t.row._row, stopped);
+        continue;
       }
       try {
         const text = htmlToText(await fetchPage(t.url), t.url);
-        if (text.length < 300) continue;
+        if (text.length < 300) {
+          if (t.kind === "existing") detailOutcome.set(t.row._row, "官網頁面是空殼（內容靠 JS，尚未列入瀏覽器名單）");
+          continue;
+        }
         await sleep(GEMINI_CALL_GAP_MS);
         detailCalls++;
         const d = await geminiJSON(detailPrompt(t.name, text), DETAIL_SCHEMA);
@@ -1303,14 +1434,22 @@ async function main() {
           if (got["ME Buy-in"]) {
             add("ME Buy-in", got["ME Buy-in"]);
             add("Currency", got.Currency);
+            detailOutcome.set(t.row._row, "");
             console.log(`  📝 第 ${t.row._row} 列 ${t.row.Tournament}｜買入 ← ${got.Currency} ${got["ME Buy-in"]}`);
+          } else {
+            detailOutcome.set(t.row._row, "官網頁面沒列主賽買入");
           }
           if (deeper && !String(t.row["Handbook URL"] ?? "").trim()) add("Handbook URL", deeper);
         }
       } catch (e) {
+        const why = /HTTP 40[13]|HTTP 5|fetch failed|ECONN|aborted|timeout/i.test(e.message)
+          ? `從 GitHub 連不上官網（${e.message.slice(0, 40)}），可能擋機房 IP`
+          : `抓取失敗（${e.message.slice(0, 60)}）`;
+        if (t.kind === "existing") detailOutcome.set(t.row._row, why);
         console.warn(`  詳情頁失敗（買入留白）：${t.name} — ${e.message}`);
       }
     }
+    if (stopped) console.warn(`  ${stopped}`);
   }
 
   // 有 Source 欄就標記 AI，方便在 Sheet 裡辨識
@@ -1343,8 +1482,15 @@ async function main() {
     );
   }
 
+  // 待補清單：主分頁裡買入還是空的、還沒結束的，連同「為什麼抓不到」
+  const todo = buildTodoList(existing, blankFills, detailOutcome, todayTs);
+  if (todo.length) {
+    console.log(`\n=== 📋 待人工補買入 ${todo.length} 筆（會寫到分頁「${TODO_TAB}」）===`);
+    for (const t of todo) console.log(`  第 ${t.row} 列 ${t.start} ${t.tournament}｜${t.why}`);
+  }
+
   if (DRY_RUN) {
-    console.log("\n（DRY_RUN 模式：以上只是預覽，沒有寫入 Sheet，也沒有補空欄位、更新日期或加取消註記）");
+    console.log("\n（DRY_RUN 模式：以上只是預覽，沒有寫入 Sheet，也沒有補空欄位、更新日期、加取消註記或寫待補清單）");
     return;
   }
 
@@ -1369,14 +1515,26 @@ async function main() {
     const n = await fillBlankCells(client, tab, headers, blankFills);
     console.log(`✅ 已補上 ${n} 個空欄位（原本有值的一個都沒動）`);
   }
+
+  // 待補清單每輪重寫（它是爬蟲自己的分頁，不是使用者資料；清單空了也要寫，讓舊的消失）
+  try {
+    const when = new Date().toLocaleString("zh-TW", { timeZone: "Asia/Taipei", hour12: false });
+    const n = await writeTodoTab(client, todo, when);
+    console.log(`✅ 待補清單已更新到分頁「${TODO_TAB}」：${n} 筆`);
+  } catch (e) {
+    // 清單寫不進去不該讓整輪失敗——主要工作都已經完成了
+    console.warn(`⚠️ 待補清單寫入失敗（不影響其他結果）：${e.message}`);
+  }
 }
 
 // 只有被直接執行時才跑主流程；被 test.mjs import 時不跑
 const isEntry =
   process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isEntry) {
-  main().catch((e) => {
-    console.error("執行失敗：", e);
-    process.exit(1);
-  });
+  main()
+    .catch((e) => {
+      console.error("執行失敗：", e);
+      process.exitCode = 1;
+    })
+    .finally(closeBrowser); // 瀏覽器不關的話 process 不會結束
 }

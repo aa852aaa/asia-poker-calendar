@@ -1,70 +1,331 @@
 {
   "_說明": "tier 1=主辦賽事方 2=場館方 3=彙整站。數字小的優先：同一場賽事，每個欄位取 tier 最小且有值的來源。type: html=抓網頁交給 LLM 抽取 / json=直接解析結構化 API（不用 LLM）。enabled:false = 暫不啟用。",
   "sources": [
-    { "tier": 1, "name": "APT Asian Poker Tour", "type": "html", "url": "https://www.theasianpokertour.com/series" },
-    { "tier": 1, "name": "GOP Gods of Poker", "type": "html", "url": "https://godsofpoker.com/series" },
-    { "tier": 1, "name": "ZSOP Zodiac Series of Poker", "type": "html", "url": "https://zodiacseriesofpoker.com/series" },
-    { "tier": 1, "name": "AJPC Samurai Circuit", "type": "html", "url": "https://samurai.ajpc.jp/en/" },
-    { "tier": 1, "name": "JOPT Japan Open Poker Tour", "type": "html", "url": "https://japanopenpoker.com/",
+    {
+      "tier": 1,
+      "name": "APT Asian Poker Tour",
+      "type": "html",
+      "url": "https://www.theasianpokertour.com/series"
+    },
+    {
+      "tier": 1,
+      "name": "GOP Gods of Poker",
+      "type": "html",
+      "url": "https://godsofpoker.com/series"
+    },
+    {
+      "tier": 1,
+      "name": "ZSOP Zodiac Series of Poker",
+      "type": "html",
+      "url": "https://zodiacseriesofpoker.com/series"
+    },
+    {
+      "tier": 1,
+      "name": "AJPC Samurai Circuit",
+      "type": "html",
+      "url": "https://samurai.ajpc.jp/en/"
+    },
+    {
+      "tier": 1,
+      "name": "JOPT Japan Open Poker Tour",
+      "type": "html",
+      "url": "https://japanopenpoker.com/",
       "brand": "JOPT",
-      "note": "站上的卡片只寫「2026 Sapporo #02」，品牌名在頁面別處。brand 會在名稱缺少品牌時自動補在前面。只有『整站每一場都屬於同一個巡迴賽』的來源才可以設 brand——CTP、APPT 這種一個站列多個不同巡迴賽的絕對不能設。" },
-    { "tier": 1, "name": "OLA Poker Tour", "type": "html", "url": "https://olapokertour.com/" },
-    { "tier": 1, "name": "PSC Players Series", "type": "html", "url": "https://www.playersseries.com/series" },
-    { "tier": 1, "name": "WPG World Poker Games", "type": "html", "url": "https://wpg.poker/events/" },
-    { "tier": 1, "name": "APL Ace Poker League", "type": "html", "url": "https://acepokerleague.com/" },
-    { "tier": 1, "name": "APPT PokerStars Live", "type": "html", "url": "https://www.pokerstarslive.com/appt/" },
-    { "tier": 1, "name": "P1 Circuit", "type": "html", "url": "https://p1-circuit.one/" },
-    { "tier": 1, "name": "RDPT Red Dragon", "type": "html", "url": "https://playreddragon.com/series-schedule.html",
-      "note": "賽事名在 img alt，列表頁沒有日期，日期靠 tier 3 補" },
-
-    { "tier": 2, "name": "CTP Club 台北", "type": "html", "url": "https://ctpclub.app/festivals" },
-
-    { "tier": 3, "name": "PokerCalendar.asia API", "type": "json",
-      "url": "https://pokercalendar.asia/wp-json/tribe/events/v1/events?per_page=100&start_date={TODAY}&end_date={TODAY+18M}" },
-    { "tier": 3, "name": "SoMuchPoker Calendar", "type": "html", "url": "https://somuchpoker.com/poker-calendar/{YEAR}" },
-
-    { "tier": 1, "name": "KPC Korea Poker Cup", "type": "html", "url": "https://www.kpcpoker.com/?lang=en",
-      "enabled": false, "note": "內容 JS 渲染，純 fetch 只拿到導覽列。要 Playwright（Phase 2）" },
-    { "tier": 1, "name": "Triton Poker Series", "type": "html", "url": "https://tritonpokerseries.com/en-US/events",
-      "enabled": false, "note": "內容 JS 渲染。要 Playwright（Phase 2）；且只收亞洲站" },
-    { "tier": 1, "name": "HPC Harbour Poker Cup", "type": "html", "url": "https://hpc.poker/",
-      "enabled": false, "note": "只有 Logo 和 PDF，日期靠 CTP（tier 2）比較準" }
+      "note": "站上的卡片只寫「2026 Sapporo #02」，品牌名在頁面別處。brand 會在名稱缺少品牌時自動補在前面。只有『整站每一場都屬於同一個巡迴賽』的來源才可以設 brand——CTP、APPT 這種一個站列多個不同巡迴賽的絕對不能設。"
+    },
+    {
+      "tier": 1,
+      "name": "OLA Poker Tour",
+      "type": "html",
+      "url": "https://olapokertour.com/"
+    },
+    {
+      "tier": 1,
+      "name": "PSC Players Series",
+      "type": "html",
+      "url": "https://www.playersseries.com/series"
+    },
+    {
+      "tier": 1,
+      "name": "WPG World Poker Games",
+      "type": "html",
+      "url": "https://wpg.poker/events/"
+    },
+    {
+      "tier": 1,
+      "name": "APL Ace Poker League",
+      "type": "html",
+      "url": "https://acepokerleague.com/"
+    },
+    {
+      "tier": 1,
+      "name": "APPT PokerStars Live",
+      "type": "html",
+      "url": "https://www.pokerstarslive.com/appt/"
+    },
+    {
+      "tier": 1,
+      "name": "P1 Circuit",
+      "type": "html",
+      "url": "https://p1-circuit.one/"
+    },
+    {
+      "tier": 1,
+      "name": "RDPT Red Dragon",
+      "type": "html",
+      "url": "https://playreddragon.com/series-schedule.html",
+      "note": "列表頁純 fetch 抓得到但內頁是 JS，統一用瀏覽器",
+      "browser": true
+    },
+    {
+      "tier": 1,
+      "name": "GLPC Grand Loyal",
+      "type": "html",
+      "url": "https://grandloyal.vn/",
+      "note": "河內。首頁有 Ongoing and upcoming series"
+    },
+    {
+      "tier": 1,
+      "name": "RPT Royal Poker Tour",
+      "type": "html",
+      "url": "https://royal-poker.com/en",
+      "browser": true,
+      "note": "河內。JS 網頁應用（PWA），純 fetch 只拿到 11 個字"
+    },
+    {
+      "tier": 1,
+      "name": "QPC Quads Poker",
+      "type": "html",
+      "url": "https://quadspoker.vn/series",
+      "note": "河內。/series 頁有 Upcoming / On Going / Completed 分區"
+    },
+    {
+      "tier": 2,
+      "name": "CTP Club 台北",
+      "type": "html",
+      "url": "https://ctpclub.app/festivals"
+    },
+    {
+      "tier": 3,
+      "name": "PokerCalendar.asia API",
+      "type": "json",
+      "url": "https://pokercalendar.asia/wp-json/tribe/events/v1/events?per_page=100&start_date={TODAY}&end_date={TODAY+18M}"
+    },
+    {
+      "tier": 3,
+      "name": "SoMuchPoker Calendar",
+      "type": "html",
+      "url": "https://somuchpoker.com/poker-calendar/{YEAR}"
+    },
+    {
+      "tier": 1,
+      "name": "KPC Korea Poker Cup",
+      "type": "html",
+      "url": "https://www.kpcpoker.com/?lang=en",
+      "note": "內容靠 JS 載入，用 Playwright 真瀏覽器抓",
+      "browser": true
+    },
+    {
+      "tier": 1,
+      "name": "Triton Poker Series",
+      "type": "html",
+      "url": "https://tritonpokerseries.com/en-US/events",
+      "note": "內容靠 JS 載入，用 Playwright 真瀏覽器抓",
+      "browser": true
+    },
+    {
+      "tier": 1,
+      "name": "HPC Harbour Poker Cup",
+      "type": "html",
+      "url": "https://hpc.poker/",
+      "note": "內容靠 JS 載入，用 Playwright 真瀏覽器抓",
+      "browser": true
+    }
   ],
-
   "_連結對照說明": "賽事系列 → 官方網站。抓不到該場賽事的專屬連結時用這個補，不依賴彙整站提供連結。比對用字界、不分大小寫，由上往下第一個命中的就採用，所以多字的、特定的要排前面。要加新系列就在這裡加一行。",
   "seriesLinks": [
-    { "match": ["Jeju Poker Festival", "RDPT", "Red Dragon"], "url": "https://playreddragon.com/series-schedule.html" },
-    { "match": ["Manila Megastack", "Manila Super Series", "Manila Special", "APPT", "PokerStars Live"], "url": "https://www.pokerstarslive.com/appt/" },
-    { "match": ["Korea Poker Cup", "KPC"], "url": "https://www.kpcpoker.com/?lang=en" },
-    { "match": ["Gods of Poker", "GOP"], "url": "https://godsofpoker.com/series" },
-    { "match": ["Zodiac Series of Poker", "ZSOP"], "url": "https://zodiacseriesofpoker.com/series" },
-    { "match": ["Players Series", "PSC"], "url": "https://www.playersseries.com/series" },
-    { "match": ["World Poker Games", "WPG"], "url": "https://wpg.poker/events/" },
-    { "match": ["Ace Poker League", "APL"], "url": "https://acepokerleague.com/" },
-    { "match": ["Harbour Poker Cup", "HPC"], "url": "https://hpc.poker/" },
-    { "match": ["Royal Poker Club", "Royal Poker Tour", "RPT"], "url": "https://royal-poker.com/en",
-      "note": "官網是 JS 網頁應用，純 fetch 只拿到 11 個字，要 Playwright 才抓得到內容。FB 粉專 facebook.com/p/RPT-Royal-Poker-Tour-61557629392903 更抓不到（要登入）" },
-    { "match": ["Grand Loyal", "GLPC"], "url": "https://grandloyal.com.vn/" },
-    { "match": ["U Series", "USOP"], "url": "https://useriespoker.com/" },
-    { "match": ["AJPC", "Samurai Circuit"], "url": "https://samurai.ajpc.jp/en/" },
-    { "match": ["Ola Poker Tour", "OLA"], "url": "https://olapokertour.com/series/" },
-    { "match": ["JOPT", "Japan Open Poker"], "url": "https://japanopenpoker.com/" },
-    { "match": ["P1 Circuit", "P1"], "url": "https://p1-circuit.one/" },
-    { "match": ["Poker Dream"], "url": "https://pokerdream-live.com/" },
-    { "match": ["Triton"], "url": "https://tritonpokerseries.com/en-US/events" },
-    { "match": ["APT", "Asian Poker Tour"], "url": "https://www.theasianpokertour.com/series" },
-    { "match": ["WSOP", "World Series of Poker"], "url": "https://www.wsop.com/schedule/" },
-    { "match": ["WPT", "World Poker Tour"], "url": "https://www.worldpokertour.com/" }
+    {
+      "match": [
+        "Jeju Poker Festival",
+        "RDPT",
+        "Red Dragon"
+      ],
+      "url": "https://playreddragon.com/series-schedule.html"
+    },
+    {
+      "match": [
+        "Manila Megastack",
+        "Manila Super Series",
+        "Manila Special",
+        "APPT",
+        "PokerStars Live"
+      ],
+      "url": "https://www.pokerstarslive.com/appt/"
+    },
+    {
+      "match": [
+        "Korea Poker Cup",
+        "KPC"
+      ],
+      "url": "https://www.kpcpoker.com/?lang=en"
+    },
+    {
+      "match": [
+        "Gods of Poker",
+        "GOP"
+      ],
+      "url": "https://godsofpoker.com/series"
+    },
+    {
+      "match": [
+        "Zodiac Series of Poker",
+        "ZSOP"
+      ],
+      "url": "https://zodiacseriesofpoker.com/series"
+    },
+    {
+      "match": [
+        "Players Series",
+        "PSC"
+      ],
+      "url": "https://www.playersseries.com/series"
+    },
+    {
+      "match": [
+        "World Poker Games",
+        "WPG"
+      ],
+      "url": "https://wpg.poker/events/"
+    },
+    {
+      "match": [
+        "Ace Poker League",
+        "APL"
+      ],
+      "url": "https://acepokerleague.com/"
+    },
+    {
+      "match": [
+        "Harbour Poker Cup",
+        "HPC"
+      ],
+      "url": "https://hpc.poker/"
+    },
+    {
+      "match": [
+        "Royal Poker Club",
+        "Royal Poker Tour",
+        "RPT"
+      ],
+      "url": "https://royal-poker.com/en",
+      "note": "官網是 JS 網頁應用，純 fetch 只拿到 11 個字，要 Playwright 才抓得到內容。FB 粉專 facebook.com/p/RPT-Royal-Poker-Tour-61557629392903 更抓不到（要登入）"
+    },
+    {
+      "match": [
+        "Grand Loyal",
+        "GLPC"
+      ],
+      "url": "https://grandloyal.vn/"
+    },
+    {
+      "match": [
+        "Quads Poker",
+        "Quads",
+        "QPC"
+      ],
+      "url": "https://quadspoker.vn/series"
+    },
+    {
+      "match": [
+        "U Series",
+        "USOP"
+      ],
+      "url": "https://useriespoker.com/"
+    },
+    {
+      "match": [
+        "AJPC",
+        "Samurai Circuit"
+      ],
+      "url": "https://samurai.ajpc.jp/en/"
+    },
+    {
+      "match": [
+        "Ola Poker Tour",
+        "OLA"
+      ],
+      "url": "https://olapokertour.com/series/"
+    },
+    {
+      "match": [
+        "JOPT",
+        "Japan Open Poker"
+      ],
+      "url": "https://japanopenpoker.com/"
+    },
+    {
+      "match": [
+        "P1 Circuit",
+        "P1"
+      ],
+      "url": "https://p1-circuit.one/"
+    },
+    {
+      "match": [
+        "Poker Dream"
+      ],
+      "url": "https://pokerdream-live.com/"
+    },
+    {
+      "match": [
+        "Triton"
+      ],
+      "url": "https://tritonpokerseries.com/en-US/events"
+    },
+    {
+      "match": [
+        "APT",
+        "Asian Poker Tour"
+      ],
+      "url": "https://www.theasianpokertour.com/series"
+    },
+    {
+      "match": [
+        "WSOP",
+        "World Series of Poker"
+      ],
+      "url": "https://www.wsop.com/schedule/"
+    },
+    {
+      "match": [
+        "WPT",
+        "World Poker Tour"
+      ],
+      "url": "https://www.worldpokertour.com/"
+    }
   ],
-
   "_連結更正說明": "爬蟲以前寫錯、後來查明的連結。既有列的 Handbook URL 完全等於左邊的值時，換成右邊的。只動「爬蟲自己寫過的錯值」，Wei 手填的連結不會被碰到（除非剛好一模一樣）。",
   "linkFixes": {
-    "https://royalpokerclub.vn/": "https://royal-poker.com/en"
+    "https://royalpokerclub.vn/": "https://royal-poker.com/en",
+    "https://grandloyal.com.vn/": "https://grandloyal.vn/"
   },
-
   "_黑名單說明": "彙整站網域。從任何來源抽到的連結只要落在這裡就丟棄，絕不寫進 Handbook URL——避免網站上的連結指回別人的彙整站。",
   "linkBlacklist": [
-    "pokercalendar.asia", "somuchpoker.com", "pokernews.com", "thehendonmob.com",
-    "cardplayer.com", "pokerfuse.com", "globalpokerindex.com", "jopt.jp"
+    "pokercalendar.asia",
+    "somuchpoker.com",
+    "pokernews.com",
+    "thehendonmob.com",
+    "cardplayer.com",
+    "pokerfuse.com",
+    "globalpokerindex.com",
+    "jopt.jp"
+  ],
+  "_瀏覽器說明": "這些網域的頁面內容靠 JS 載入，純 fetch 只拿到空殼。列表抓取和詳情頁補買入都改用 Playwright 真瀏覽器。",
+  "browserHosts": [
+    "royal-poker.com",
+    "kpcpoker.com",
+    "tritonpokerseries.com",
+    "hpc.poker",
+    "playreddragon.com"
   ]
 }
