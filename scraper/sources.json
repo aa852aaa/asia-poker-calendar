@@ -17,8 +17,7 @@
       "tier": 1,
       "name": "ZSOP Zodiac Series of Poker",
       "type": "html",
-      "url": "https://zodiacseriesofpoker.com/series",
-      "location": "Taipei, Taiwan"
+      "url": "https://zodiacseriesofpoker.com/series"
     },
     {
       "tier": 1,
@@ -144,8 +143,7 @@
       "type": "html",
       "url": "https://hpc.poker/",
       "note": "內容靠 JS 載入，用 Playwright 真瀏覽器抓",
-      "browser": true,
-      "location": "Taipei, Taiwan"
+      "browser": true
     },
     {
       "tier": 3,
@@ -387,5 +385,5 @@
     "hpc.poker",
     "playreddragon.com"
   ],
-  "_預設地點說明": "來源設了 location 的話，抽出來的賽事地點是空的就用它——有些主辦站每場賽事不會重複寫城市（都在同一個場館），AI 不一定會從上下文推。"
+  "_預設地點說明": "來源設了 location 的話，抽出來的賽事地點是空的就用它。只給「所有賽事一定在同一個地方」的來源設（CTP 是台北的場館）；ZSOP、HPC 這種巡迴賽不一定在台北，不能設，地點要靠頁面上寫的。"
 }
