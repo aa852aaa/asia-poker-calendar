@@ -271,16 +271,32 @@ eq("國家不在對照表 → 原樣保留英文，不生半殘的雙語",
   formatLocation("Budva, Montenegro"), "Budva, Montenegro");
 eq("空字串", formatLocation(""), "");
 
-console.log("\n【18】列表頁直接抓到的買入（省一次詳情頁呼叫）");
-eq("正常值", pickBuyIn({ me_buyin: 35000, currency: "twd" }), { "ME Buy-in": "35000", Currency: "TWD" });
-eq("沒填 → 留白", pickBuyIn({}), { "ME Buy-in": "", Currency: "" });
-eq("null → 留白", pickBuyIn({ me_buyin: null, currency: "TWD" }), { "ME Buy-in": "", Currency: "" });
-eq("0 → 留白", pickBuyIn({ me_buyin: 0, currency: "TWD" }), { "ME Buy-in": "", Currency: "" });
-eq("一億以上（八成是把保證獎池當成買入）→ 留白",
-  pickBuyIn({ me_buyin: 100000000, currency: "KRW" }), { "ME Buy-in": "", Currency: "" });
-eq("幣別不是三碼 → 留白", pickBuyIn({ me_buyin: 5000, currency: "NT$" }), { "ME Buy-in": "", Currency: "" });
-eq("有金額沒幣別 → 留白（換算不了就別寫）",
-  pickBuyIn({ me_buyin: 5000, currency: "" }), { "ME Buy-in": "", Currency: "" });
+console.log("\n【18】買入金額的防線（2026-09-16 WWP 的保證獎金 TWD 1,000 萬被當成買入寫進表格）");
+const B = { "ME Buy-in": "", Currency: "" };
+eq("正常值（有原文佐證）", pickBuyIn({ me_buyin: 33000, currency: "twd", buyin_evidence: "主賽 Buy-in NT$33,000" }),
+  { "ME Buy-in": "33000", Currency: "TWD" });
+eq("沒附原文 → 留白（公開的數字寧可留白）", pickBuyIn({ me_buyin: 33000, currency: "TWD" }), B);
+eq("WWP 那筆：原文是「保證獎金」→ 留白",
+  pickBuyIn({ me_buyin: 10000000, currency: "TWD", buyin_evidence: "10/4 起 WWP S5 主賽正式開始 保證獎金 $ 10,000,000 NTD" }), B);
+eq("TWD 1,000 萬就算原文寫 buy-in 也擋（≈ $31 萬，超過上限）",
+  pickBuyIn({ me_buyin: 10000000, currency: "TWD", buyin_evidence: "buy-in NT$10,000,000" }), B);
+eq("原文同時有 GTD 和 Buy-in → 信（數字本身另有上限把關）",
+  pickBuyIn({ me_buyin: 33000, currency: "TWD", buyin_evidence: "Main Event NT$33,000 buy-in, NT$17M GTD" }),
+  { "ME Buy-in": "33000", Currency: "TWD" });
+eq("Triton $250k 超高額 → 在上限內，收",
+  pickBuyIn({ me_buyin: 250000, currency: "USD", buyin_evidence: "$250,000 NLH Main Event buy-in" }),
+  { "ME Buy-in": "250000", Currency: "USD" });
+eq("VND 2,750 萬（≈ $1,080）→ 收", pickBuyIn({ me_buyin: 27500000, currency: "VND", buyin_evidence: "Buy-in 27.5M" }),
+  { "ME Buy-in": "27500000", Currency: "VND" });
+eq("KRW 6 億（≈ $43 萬）→ 擋", pickBuyIn({ me_buyin: 600000000, currency: "KRW", buyin_evidence: "buy-in 600,000,000" }), B);
+eq("韓文原文「게런티」→ 擋", pickBuyIn({ me_buyin: 35000000, currency: "JPY", buyin_evidence: "메인 이벤트 게런티 35,000,000엔" }), B);
+eq("不認識的幣別走舊的一億上限", pickBuyIn({ me_buyin: 5000, currency: "XYZ", buyin_evidence: "buy-in 5000" }),
+  { "ME Buy-in": "5000", Currency: "XYZ" });
+eq("沒填 → 留白", pickBuyIn({}), B);
+eq("null → 留白", pickBuyIn({ me_buyin: null, currency: "TWD", buyin_evidence: "x" }), B);
+eq("0 → 留白", pickBuyIn({ me_buyin: 0, currency: "TWD", buyin_evidence: "x" }), B);
+eq("幣別不是三碼 → 留白", pickBuyIn({ me_buyin: 5000, currency: "NT$", buyin_evidence: "buy-in" }), B);
+eq("有金額沒幣別 → 留白（換算不了就別寫）", pickBuyIn({ me_buyin: 5000, currency: "", buyin_evidence: "buy-in" }), B);
 
 console.log("\n【19】系列官網後備連結（不依賴彙整站提供連結）");
 const srcJson = JSON.parse(await readFile(new URL("./sources.json", import.meta.url), "utf8"));

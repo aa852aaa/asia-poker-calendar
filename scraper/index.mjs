@@ -411,6 +411,7 @@ const LISTING_SCHEMA = {
       cancelled: { type: "BOOLEAN", description: "頁面上標示為取消就填 true" },
       me_buyin: { type: "NUMBER", nullable: true, description: "主賽事買入，列表上有寫才填" },
       currency: { type: "STRING", description: "買入的幣別 ISO 代碼" },
+      buyin_evidence: { type: "STRING", description: "頁面上寫這個買入金額的那句原文，有填 me_buyin 就一定要填" },
     },
     required: ["source_index", "tournament", "start_date", "end_date", "location"],
   },
@@ -434,6 +435,7 @@ const DETAIL_SCHEMA = {
   properties: {
     me_buyin: { type: "NUMBER", nullable: true },
     currency: { type: "STRING" },
+    buyin_evidence: { type: "STRING", description: "頁面上寫這個買入金額的那句原文，有填 me_buyin 就一定要填" },
     handbook_url: { type: "STRING" },
   },
   required: [],
@@ -474,9 +476,11 @@ function listingPrompt(items, today) {
   網站名稱找出所屬的巡迴賽／系列名稱補在前面（變成「JOPT 2026 Sapporo #02」）。
   這個名稱會單獨顯示在賽程表上，旁邊沒有任何說明。
 - me_buyin：**列表上有明確寫出主賽事（Main Event）買入金額時才填**，只填數字，currency 填 ISO 代碼
-  （TWD、JPY、KRW、USD、PHP、VND、MYR、HKD、SGD、THB、MOP、CNY 等）。
-  ⚠️ 要的是 buy-in（買入費），**不是保證獎池**（GTD / guarantee / prize pool / 게런티 / 総額）——
-  獎池金額通常大好幾個數量級，拿錯會讓表格完全失真。分不清楚或頁面沒寫就填 null，絕對不要猜。
+  （TWD、JPY、KRW、USD、PHP、VND、MYR、HKD、SGD、THB、MOP、CNY、AUD 等）。
+  ⚠️ 要的是 buy-in（買入費／報名費），**絕對不是保證獎池**（GTD / guarantee / prize pool / 保證獎金 /
+  게런티 / 総額）——獎池通常大好幾個數量級，拿錯會讓表格完全失真。
+  有填 me_buyin 就**一定要**在 buyin_evidence 填「頁面上寫這個金額的那句原文」（例如「主賽 Buy-in NT$33,000」）。
+  原文裡如果是「保證獎金」「GTD」這類字，那就不是買入，me_buyin 填 null。分不清楚或頁面沒寫就填 null，絕對不要猜。
 
 頁面內容：
 
@@ -525,7 +529,9 @@ function detailPrompt(name, text) {
 - 要的是 buy-in（買入費），不是保證獎池（GTD / guarantee / prize pool / 게런티）。獎池金額通常大很多，不要拿錯。
 - 金額若寫成 33,000+3,000 這種「賽事費+行政費」，請加總成一個數字。
 - me_buyin 只輸出數字；整頁找不到主賽事買入就輸出 null，不要猜。
-- currency 用 ISO 代碼（TWD、JPY、KRW、USD、PHP、VND、MYR、HKD、SGD、THB、MOP、CNY、INR、EUR 等），找不到填空字串。
+- currency 用 ISO 代碼（TWD、JPY、KRW、USD、PHP、VND、MYR、HKD、SGD、THB、MOP、CNY、AUD、INR、EUR 等），找不到填空字串。
+- 有填 me_buyin 就**一定要**在 buyin_evidence 填「頁面上寫這個金額的那句原文」。
+  原文裡是「保證獎金」「GTD」「Prize Pool」這類字的話那不是買入，me_buyin 要填 null。
 - handbook_url 填「這個系列自己的頁面」網址（從 [link:...] 取，例如 /series/xxx-2026）。找不到就填空字串，不要拿首頁充數。
 
 頁面內容：
@@ -790,12 +796,33 @@ const ZH_CITY = {
 
 // 列表頁本來就寫了買入金額時直接用，省下一次詳情頁的 LLM 呼叫（每日只有 20 次很珍貴）。
 // 上限擋掉明顯是保證獎池被誤當成買入的情況（沒有主賽事買入是一億起跳的）。
+// 2026-09-16 Win Win Poker 的「主賽保證獎金 $10,000,000 NTD」被 lite 模型當成買入寫進表格，
+// 台北賽事直接顯示在網站上（TWD 10,000,000 ≈ $316,000）。提示詞早就警告過不要拿獎池，
+// 光靠提示詞擋不住，所以加兩道程式防線：
+//   1. 換算成美元的上限——Triton 的超高額買入也才 $100k–$250k，超過 $300k 一定是獎池
+//   2. AI 必須附上「頁面上寫這個金額的那句原文」，那句話有獎池字樣、沒有買入字樣就不算
+const ROUGH_USD_RATE = {
+  USD: 1, TWD: 32, JPY: 155, KRW: 1380, PHP: 57, VND: 25500, MYR: 4.5, HKD: 7.8, SGD: 1.35,
+  THB: 34, MOP: 8, CNY: 7.2, AUD: 1.5, NZD: 1.65, EUR: 0.92, GBP: 0.78, INR: 84, IDR: 15800, KHR: 4100,
+};
+const MAX_BUYIN_USD = 300_000;
+const BUYIN_WORDS = /buy.?in|entry\s*fee|entry|買入|報名費|參賽費|バイイン|바이인/i;
+const GTD_WORDS = /\bgtd\b|guarante|保證|保底|獎池|獎金|prize\s*pool|総額|賞金|게런티|보장|프라이즈/i;
+
 export function pickBuyIn(ev) {
+  const blank = { "ME Buy-in": "", Currency: "" };
   const n = Number(ev?.me_buyin);
   const ccy = String(ev?.currency ?? "").trim().toUpperCase();
-  if (!Number.isFinite(n) || n <= 0 || n >= 100_000_000 || !/^[A-Z]{3}$/.test(ccy)) {
-    return { "ME Buy-in": "", Currency: "" };
-  }
+  if (!Number.isFinite(n) || n <= 0 || !/^[A-Z]{3}$/.test(ccy)) return blank;
+
+  const rate = ROUGH_USD_RATE[ccy];
+  if (rate ? n / rate > MAX_BUYIN_USD : n >= 100_000_000) return blank;
+
+  // 沒附原文的一律不信：這個數字會直接公開在網站上，寧可留白等下次
+  const evidence = String(ev?.buyin_evidence ?? "").trim();
+  if (!evidence) return blank;
+  if (GTD_WORDS.test(evidence) && !BUYIN_WORDS.test(evidence)) return blank;
+
   return { "ME Buy-in": String(n), Currency: ccy };
 }
 
