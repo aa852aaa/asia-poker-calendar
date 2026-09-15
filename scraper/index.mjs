@@ -475,13 +475,42 @@ ${text}`;
 
 // ---------- Google Sheets ----------
 
+// Google Sheets 的暫時性錯誤（連線被重置、逾時、5xx）要重試，不能整輪直接死掉。
+// 2026-09-14 週一排程就是這樣：爬了 7 分鐘全部成功，最後寫入時一個 ECONNRESET 讓整輪 exit 1，
+// 補到的買入沒寫進去，還寄了失敗信。權限錯誤（403）、資料錯誤（400）這類不是暫時性的，不重試。
+const TRANSIENT_NET = /ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|EPIPE|socket hang up|network|fetch failed/i;
+
+export function isTransientSheetsError(e) {
+  const status = e?.response?.status ?? (typeof e?.code === "number" ? e.code : undefined);
+  if (status === 429 || (typeof status === "number" && status >= 500)) return true;
+  return TRANSIENT_NET.test(String(e?.message ?? "")) || TRANSIENT_NET.test(String(e?.code ?? ""));
+}
+
+async function withRetry(fn, label) {
+  const waits = [5_000, 15_000, 30_000];
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (!isTransientSheetsError(e) || attempt > waits.length) throw e;
+      const wait = waits[attempt - 1];
+      console.warn(`  Google Sheets 暫時性錯誤（${label}）：${String(e?.message ?? e).slice(0, 100)}，${wait / 1000} 秒後重試...`);
+      await sleep(wait);
+    }
+  }
+}
+
 function sheetsClient() {
   const creds = JSON.parse(SA_JSON);
-  return new JWT({
+  const jwt = new JWT({
     email: creds.client_email,
     key: creds.private_key,
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
   });
+  // 所有對 Sheets 的呼叫都經過這裡，讀寫一律有重試
+  return {
+    request: (opts) => withRetry(() => jwt.request(opts), `${opts.method ?? "GET"} ${String(opts.url).split("/").pop().split("?")[0]}`),
+  };
 }
 
 async function resolveTabName(client) {

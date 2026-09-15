@@ -7,7 +7,7 @@ import {
   mergeGroup, detectDateChange, validateEvent, colLetter, htmlToText,
   fixCountry, fixCity, isDuplicateConservative, pickReplacementModel,
   applyBrand, festivalDays, isDailyQuotaError, packBatches, stripCancelMark, findSheetRow,
-  formatLocation, pickBuyIn, seriesLink, detectBlankFills, detailTargets,
+  formatLocation, pickBuyIn, seriesLink, detectBlankFills, detailTargets, isTransientSheetsError,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -365,6 +365,20 @@ eq("這輪剛排入要補的連結也算數", tg.find((t) => t.name === "Pending
 eq("新增列帶著 ev 物件（結果要寫回去）", tg[0].kind === "new" && tg[0].ev?.Tournament, "New A");
 eq("既有列帶著 row 物件（要知道寫第幾列）", tg[1].kind === "existing" && tg[1].row?._row, 11);
 eq("沒有任何目標 → 空陣列", detailTargets([], [], [], T0), []);
+
+console.log("\n【22】Google Sheets 錯誤：暫時性的重試，權限／資料錯誤不重試");
+ok("ECONNRESET（2026-09-14 週一排程實際遇到的）→ 重試",
+  isTransientSheetsError(new Error("request to https://sheets.googleapis.com/... failed, reason: read ECONNRESET")));
+ok("ETIMEDOUT → 重試", isTransientSheetsError({ message: "connect ETIMEDOUT", code: "ETIMEDOUT" }));
+ok("socket hang up → 重試", isTransientSheetsError(new Error("socket hang up")));
+ok("HTTP 503 → 重試", isTransientSheetsError({ message: "Service Unavailable", response: { status: 503 } }));
+ok("HTTP 429 → 重試", isTransientSheetsError({ message: "Too Many Requests", response: { status: 429 } }));
+ok("HTTP 403 權限錯誤 → 不重試（重試也不會變有權限）",
+  !isTransientSheetsError({ message: "The caller does not have permission", response: { status: 403 } }));
+ok("HTTP 400 資料錯誤 → 不重試", !isTransientSheetsError({ message: "Invalid range", response: { status: 400 } }));
+ok("HTTP 404 → 不重試", !isTransientSheetsError({ message: "Requested entity was not found", response: { status: 404 } }));
+ok("欄位對不上的中止訊息 → 不重試",
+  !isTransientSheetsError(new Error("分頁缺少必要欄位「Start Date」— 是不是接錯分頁了？")));
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);

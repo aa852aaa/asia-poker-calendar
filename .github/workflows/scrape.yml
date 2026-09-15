@@ -2,7 +2,9 @@ name: AI 抓賽程
 
 on:
   schedule:
-    - cron: "0 1 * * 1" # 每週一 01:00 UTC = 台北時間 09:00
+    # 每週一 01:23 UTC = 台北時間 09:23。
+    # 刻意避開整點：GitHub 的排程在整點最塞，2026-09-14 那次排 01:00 結果 05:52 才跑（晚了近 5 小時）。
+    - cron: "23 1 * * 1"
   workflow_dispatch:
     inputs:
       dry_run:
