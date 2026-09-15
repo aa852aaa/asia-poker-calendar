@@ -677,7 +677,7 @@ async function loadSources() {
     }
   }
   out.sort((a, b) => a.tier - b.tier);
-  return { sources: out, blacklist, seriesLinks: raw.seriesLinks ?? [] };
+  return { sources: out, blacklist, seriesLinks: raw.seriesLinks ?? [], linkFixes: raw.linkFixes ?? {} };
 }
 
 export function festivalDays(ev) {
@@ -984,6 +984,23 @@ export function detailTargets(toAppend, existing, blankFills, todayTs) {
   return [...fresh, ...soon];
 }
 
+// 爬蟲以前寫錯、後來查明的連結（sources.json 的 linkFixes）：既有列的 Handbook URL
+// 完全等於已知錯值時換成正確的。這不需要跟候選比對——掃整張表，只認「一模一樣」的值，
+// 所以 Wei 手填的連結不會被誤改。（RPT 的 royalpokerclub.vn → FB 粉專 就是第一個案例）
+export function detectLinkFixes(existing, linkFixes) {
+  const map = new Map(Object.entries(linkFixes ?? {}).map(([k, v]) => [k.trim(), v]));
+  if (!map.size) return [];
+  const out = [];
+  for (const r of existing) {
+    const cur = String(r["Handbook URL"] ?? "").trim();
+    const fixed = map.get(cur);
+    if (fixed && fixed !== cur) {
+      out.push({ row: r._row, tournament: r.Tournament, col: "Handbook URL", value: fixed, why: "更正錯連結" });
+    }
+  }
+  return out;
+}
+
 // 改期偵測：既有列的日期 vs 主辦方（tier 1/2）現在公布的日期
 export function detectDateChange(merged, sheetRow) {
   if (!sheetRow) return null;
@@ -1011,7 +1028,7 @@ export function detectDateChange(merged, sheetRow) {
 // ---------- 主流程 ----------
 
 async function main() {
-  const { sources, blacklist, seriesLinks } = await loadSources();
+  const { sources, blacklist, seriesLinks, linkFixes } = await loadSources();
 
   if (TEST_FETCH) {
     // 不需要金鑰的連線測試：確認每個來源抓得到、文字量正常
@@ -1148,7 +1165,8 @@ async function main() {
   const collected = [];
   const dateChanges = [];
   const cancellations = [];
-  const blankFills = [];
+  // 先掃一遍已知錯連結的更正（不需要候選比對），後面的補空白會接著往這個陣列加
+  const blankFills = detectLinkFixes(existing, linkFixes);
   let skippedExisting = 0;
   let skippedCancelled = 0;
   for (const g of groups) {

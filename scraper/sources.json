@@ -42,7 +42,8 @@
     { "match": ["World Poker Games", "WPG"], "url": "https://wpg.poker/events/" },
     { "match": ["Ace Poker League", "APL"], "url": "https://acepokerleague.com/" },
     { "match": ["Harbour Poker Cup", "HPC"], "url": "https://hpc.poker/" },
-    { "match": ["Royal Poker Club", "RPT"], "url": "https://royalpokerclub.vn/" },
+    { "match": ["Royal Poker Club", "Royal Poker Tour", "RPT"], "url": "https://royal-poker.com/en",
+      "note": "官網是 JS 網頁應用，純 fetch 只拿到 11 個字，要 Playwright 才抓得到內容。FB 粉專 facebook.com/p/RPT-Royal-Poker-Tour-61557629392903 更抓不到（要登入）" },
     { "match": ["Grand Loyal", "GLPC"], "url": "https://grandloyal.com.vn/" },
     { "match": ["U Series", "USOP"], "url": "https://useriespoker.com/" },
     { "match": ["AJPC", "Samurai Circuit"], "url": "https://samurai.ajpc.jp/en/" },
@@ -55,6 +56,11 @@
     { "match": ["WSOP", "World Series of Poker"], "url": "https://www.wsop.com/schedule/" },
     { "match": ["WPT", "World Poker Tour"], "url": "https://www.worldpokertour.com/" }
   ],
+
+  "_連結更正說明": "爬蟲以前寫錯、後來查明的連結。既有列的 Handbook URL 完全等於左邊的值時，換成右邊的。只動「爬蟲自己寫過的錯值」，Wei 手填的連結不會被碰到（除非剛好一模一樣）。",
+  "linkFixes": {
+    "https://royalpokerclub.vn/": "https://royal-poker.com/en"
+  },
 
   "_黑名單說明": "彙整站網域。從任何來源抽到的連結只要落在這裡就丟棄，絕不寫進 Handbook URL——避免網站上的連結指回別人的彙整站。",
   "linkBlacklist": [

@@ -8,6 +8,7 @@ import {
   fixCountry, fixCity, isDuplicateConservative, pickReplacementModel,
   applyBrand, festivalDays, isDailyQuotaError, packBatches, stripCancelMark, findSheetRow,
   formatLocation, pickBuyIn, seriesLink, detectBlankFills, detailTargets, isTransientSheetsError,
+  detectLinkFixes,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -284,8 +285,8 @@ eq("Jeju Poker Festival 2026 → Red Dragon（名稱沒有 RDPT 字樣）",
   seriesLink("Jeju Poker Festival 2026", SL), "https://playreddragon.com/series-schedule.html");
 eq("GLPC Ultimate Showdown 2026", seriesLink("GLPC Ultimate Showdown 2026", SL),
   "https://grandloyal.com.vn/");
-eq("RPT Championship Grand Final", seriesLink("RPT Championship Grand Final", SL),
-  "https://royalpokerclub.vn/");
+eq("RPT Championship Grand Final（官網已更正為 royal-poker.com）", seriesLink("RPT Championship Grand Final", SL),
+  "https://royal-poker.com/en");
 eq("AJPC Samurai Circuit - Incheon 2026 III", seriesLink("AJPC Samurai Circuit - Incheon 2026 III", SL),
   "https://samurai.ajpc.jp/en/");
 eq("Poker Dream 26 Malaysia（官網 JS 驗證抓不到，但連結可以給）",
@@ -381,6 +382,23 @@ ok("HTTP 400 資料錯誤 → 不重試", !isTransientSheetsError({ message: "In
 ok("HTTP 404 → 不重試", !isTransientSheetsError({ message: "Requested entity was not found", response: { status: 404 } }));
 ok("欄位對不上的中止訊息 → 不重試",
   !isTransientSheetsError(new Error("分頁缺少必要欄位「Start Date」— 是不是接錯分頁了？")));
+
+console.log("\n【23】更正爬蟲以前寫錯的連結（只認一模一樣的值，不碰 Wei 手填的）");
+const LF = srcJson.linkFixes;
+const sheetLinks = [
+  { _row: 88, Tournament: "RPT Championship IV", "Handbook URL": "https://royalpokerclub.vn/" },      // 爬蟲寫錯的 → 要改
+  { _row: 92, Tournament: "RPT Grand Final", "Handbook URL": "https://royalpokerclub.vn/ " },        // 尾端多空白也要認得
+  { _row: 63, Tournament: "GOP Taipei", "Handbook URL": "https://godsofpoker.com/series/taipei-2026-ii" }, // 正確的 → 不動
+  { _row: 70, Tournament: "Wei 手填", "Handbook URL": "https://royalpokerclub.vn/some-page" },       // 只是前綴相同 → 不動
+  { _row: 75, Tournament: "空的", "Handbook URL": "" },                                              // 空的 → 不動（那是補空白的事）
+];
+const fx = detectLinkFixes(sheetLinks, LF);
+eq("只有一模一樣的兩筆被更正", fx.map((f) => f.row).sort(), [88, 92]);
+eq("更正成官網", fx[0]?.value, "https://royal-poker.com/en");
+eq("前綴相同但不完全一樣的不動", fx.some((f) => f.row === 70), false);
+eq("沒有更正表 → 空陣列", detectLinkFixes(sheetLinks, {}), []);
+eq("更正表是 undefined 也不會爆", detectLinkFixes(sheetLinks, undefined), []);
+ok("更正的值本身不是彙整站", Object.values(LF).every((v) => !/pokercalendar\.asia|somuchpoker\.com/i.test(v)));
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);
