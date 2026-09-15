@@ -44,7 +44,9 @@ ok("南亞：印度不收（超出西太平洋+東南亞）", !geo("India Poker 
 ok("南亞：斯里蘭卡不收", !geo("Poker Dream Sri Lanka", "Colombo, Sri Lanka"));
 ok("中亞：烏茲別克不收", !geo("Merit Poker Tashkent", "Tashkent, Uzbekistan"));
 ok("西亞：土耳其不收", !geo("Some Series", "Istanbul, Turkey"));
-ok("澳洲不收", !geo("APL Million", "Southport, Australia"));
+ok("澳洲收（2026-09-16 Wei 加入）", geo("APL Million", "Southport, Australia"));
+ok("紐西蘭不收（Wei 只說澳洲）", !geo("NZ Poker Champs", "Auckland, New Zealand"));
+ok("新喀里多尼亞不收（澳洲彙整站會列，但不在範圍）", !geo("Nouméa Poker Series", "Nouméa, New Caledonia"));
 ok("只有國家沒城市也能判", isAsia("Malaysia"));
 ok("空地點 → 不收", !geo("Some Event", ""));
 
@@ -127,6 +129,16 @@ ok("已結束的擋掉", validateEvent(mk({ "Start Date": "2026-08-01", "End Dat
 ok("沒有地點擋掉", validateEvent(mk({ Location: "" }), todayTs) === "沒有地點");
 ok("捷克賽事擋掉", String(validateEvent(mk({ Location: "Rozvadov, Czech Republic" }), todayTs)).startsWith("地區不收"));
 ok("日期格式不對擋掉", validateEvent(mk({ "Start Date": "Oct 1 2026" }), todayTs) === "日期格式不對");
+// 2026-09-16 兩筆真的寫進表格的錯資料
+ok("GLPC 的「DAILY SCHEDULE」週賽擋掉",
+  validateEvent(mk({ Tournament: "Grand Loyal DAILY SCHEDULE 14.9.2026---20.9.2026" }), todayTs) === "例行賽程不是錦標賽系列");
+ok("「Quads Weekly」擋掉", validateEvent(mk({ Tournament: "Quads Weekly 14/09-20/09/2026" }), todayTs) === "例行賽程不是錦標賽系列");
+ok("彙整站來的單日賽事擋掉（WSOP Paradise 被抽成 9/16 一天）",
+  String(validateEvent(mk({ Tournament: "WSOP Paradise 2026", "Start Date": "2026-09-16", "End Date": "2026-09-16", _tier: 3 }), todayTs)).startsWith("彙整站的單日"));
+ok("主辦站來的單日賽事不擋（T1 的資料可信）",
+  validateEvent(mk({ Tournament: "One Day Special", "Start Date": "2026-10-01", "End Date": "2026-10-01", _tier: 1 }), todayTs) === null);
+ok("名稱裡的 Daily 是單字才算（Dailymotion Cup 不會被誤擋）",
+  validateEvent(mk({ Tournament: "Dailymotion Cup" }), todayTs) === null);
 
 console.log("\n【7】試算表欄位字母");
 eq("第 0 欄 = A", colLetter(0), "A");
@@ -248,6 +260,10 @@ eq("河內", formatLocation("Hanoi, Vietnam"), "越南 河內\nHanoi, Vietnam");
 eq("澳門路氹", formatLocation("Cotai, Macau"), "澳門 路氹\nCotai, Macau");
 eq("巴哈馬天堂島", formatLocation("Paradise, Bahamas"), "巴哈馬 天堂島\nParadise, Bahamas");
 eq("城市國家同名 → 只寫國家（不要「新加坡 新加坡」）", formatLocation("Singapore, Singapore"), "新加坡 \nSingapore");
+eq("澳洲：郊區對到城市（Southbank, Melbourne → 墨爾本）",
+  formatLocation("Southbank, Melbourne, Australia"), "澳洲 墨爾本\nSouthbank, Melbourne, Australia");
+eq("澳洲：Kogarah → 雪梨", formatLocation("Kogarah, Australia"), "澳洲 雪梨\nKogarah, Australia");
+eq("澳洲：Surfers Paradise → 黃金海岸", formatLocation("Surfers Paradise, Australia"), "澳洲 黃金海岸\nSurfers Paradise, Australia");
 eq("澳門, 澳門 同理", formatLocation("Macau, Macau"), "澳門 \nMacau");
 eq("城市不在對照表 → 中文只寫國家，英文保留城市",
   formatLocation("Gangneung, South Korea"), "韓國 \nGangneung, Korea");
@@ -295,6 +311,16 @@ eq("Poker Dream 26 Malaysia（官網 JS 驗證抓不到，但連結可以給）"
   seriesLink("Poker Dream 26 Malaysia", SL), "https://pokerdream-live.com/");
 eq("對照表沒有的系列 → 留空，不亂給連結",
   seriesLink("Super Cup 7 Incheon 2026", SL), "");
+// 澳洲 vs 亞洲的縮寫撞名：APT / APL
+eq("Australian Poker Tour → 澳洲官網（不是亞洲的 APT）",
+  seriesLink("Australian Poker Tour - Melbourne Champs II (VIC)", SL), "https://australianpokertour.com.au/");
+eq("APT Jeju 還是亞洲的 APT", seriesLink("APT Jeju 2026", SL), "https://www.theasianpokertour.com/series");
+eq("APL Million Sydney → 澳洲 playapl（不是韓國的 Ace Poker League）",
+  seriesLink("APL Million Sydney - The Star (NSW)", SL), "https://playapl.com/");
+eq("APLPT Brisbane → 澳洲 playapl", seriesLink("APLPT – Brisbane – Broncos Club (QLD)", SL), "https://playapl.com/");
+eq("APL Jeju 還是韓國的 Ace Poker League", seriesLink("APL Jeju 2026", SL), "https://acepokerleague.com/");
+eq("Aussie Millions → Crown", seriesLink("2027 Aussie Millions - Crown Melbourne", SL),
+  "https://www.crownmelbourne.com.au/casino/table-games/poker");
 eq("空名稱 → 留空", seriesLink("", SL), "");
 ok("每個系列的網址都不是彙整站",
   SL.every((e) => !/pokercalendar\.asia|somuchpoker\.com|thehendonmob\.com/i.test(e.url)));

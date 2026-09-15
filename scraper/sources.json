@@ -17,7 +17,8 @@
       "tier": 1,
       "name": "ZSOP Zodiac Series of Poker",
       "type": "html",
-      "url": "https://zodiacseriesofpoker.com/series"
+      "url": "https://zodiacseriesofpoker.com/series",
+      "location": "Taipei, Taiwan"
     },
     {
       "tier": 1,
@@ -82,7 +83,8 @@
       "name": "GLPC Grand Loyal",
       "type": "html",
       "url": "https://grandloyal.vn/",
-      "note": "河內。首頁有 Ongoing and upcoming series"
+      "note": "河內。首頁有 Ongoing and upcoming series",
+      "location": "Hanoi, Vietnam"
     },
     {
       "tier": 1,
@@ -90,20 +92,23 @@
       "type": "html",
       "url": "https://royal-poker.com/en",
       "browser": true,
-      "note": "河內。JS 網頁應用（PWA），純 fetch 只拿到 11 個字"
+      "note": "河內。JS 網頁應用（PWA），純 fetch 只拿到 11 個字",
+      "location": "Hanoi, Vietnam"
     },
     {
       "tier": 1,
       "name": "QPC Quads Poker",
       "type": "html",
       "url": "https://quadspoker.vn/series",
-      "note": "河內。/series 頁有 Upcoming / On Going / Completed 分區"
+      "note": "河內。/series 頁有 Upcoming / On Going / Completed 分區",
+      "location": "Hanoi, Vietnam"
     },
     {
       "tier": 2,
       "name": "CTP Club 台北",
       "type": "html",
-      "url": "https://ctpclub.app/festivals"
+      "url": "https://ctpclub.app/festivals",
+      "location": "Taipei, Taiwan"
     },
     {
       "tier": 3,
@@ -139,11 +144,65 @@
       "type": "html",
       "url": "https://hpc.poker/",
       "note": "內容靠 JS 載入，用 Playwright 真瀏覽器抓",
-      "browser": true
+      "browser": true,
+      "location": "Taipei, Taiwan"
+    },
+    {
+      "tier": 3,
+      "name": "Australian Poker Schedule API",
+      "type": "json",
+      "url": "https://australianpokerschedule.com.au/wp-json/tribe/events/v1/events?per_page=100&start_date={TODAY}&end_date={TODAY+18M}",
+      "note": "澳洲彙整站，Wei 2026-09-16 指定納入。結構化 JSON 不用 AI"
     }
   ],
-  "_連結對照說明": "賽事系列 → 官方網站。抓不到該場賽事的專屬連結時用這個補，不依賴彙整站提供連結。比對用字界、不分大小寫，由上往下第一個命中的就採用，所以多字的、特定的要排前面。要加新系列就在這裡加一行。",
+  "_連結對照說明": "賽事系列 → 官方網站。抓不到該場賽事的專屬連結時用這個補，不依賴彙整站提供連結。比對用字界、不分大小寫，由上往下第一個命中的就採用，所以多字的、特定的要排前面。要加新系列就在這裡加一行。 ⚠️ 澳洲的 Australian Poker Tour／Australian Poker League 跟亞洲的 APT／APL 縮寫相同，所以澳洲的用全名比對並排在前面。",
   "seriesLinks": [
+    {
+      "match": [
+        "Australian Poker Tour"
+      ],
+      "url": "https://australianpokertour.com.au/"
+    },
+    {
+      "match": [
+        "Aussie Millions"
+      ],
+      "url": "https://www.crownmelbourne.com.au/casino/table-games/poker"
+    },
+    {
+      "match": [
+        "APL Million",
+        "APLPT",
+        "Australian Poker League"
+      ],
+      "url": "https://playapl.com/"
+    },
+    {
+      "match": [
+        "Kings Poker"
+      ],
+      "url": "https://kingspoker.com.au/"
+    },
+    {
+      "match": [
+        "PlayLive"
+      ],
+      "url": "https://playlive.melbourne"
+    },
+    {
+      "match": [
+        "Aurum Poker",
+        "Sydney Showdown"
+      ],
+      "url": "https://aurumpoker.com.au"
+    },
+    {
+      "match": [
+        "Crown Poker",
+        "Victorian Poker Champs"
+      ],
+      "url": "https://www.crownmelbourne.com.au/casino/table-games/poker"
+    },
     {
       "match": [
         "Jeju Poker Festival",
@@ -327,5 +386,6 @@
     "tritonpokerseries.com",
     "hpc.poker",
     "playreddragon.com"
-  ]
+  ],
+  "_預設地點說明": "來源設了 location 的話，抽出來的賽事地點是空的就用它——有些主辦站每場賽事不會重複寫城市（都在同一個場館），AI 不一定會從上下文推。"
 }

@@ -67,8 +67,8 @@ const REQUIRED_HEADERS = [
 ];
 
 // ---------- 地區規則 ----------
-// 收錄範圍：西太平洋（東亞）+ 東南亞。依「賽事舉辦地點」判斷，不是依巡迴賽名稱——
-// WPT、EPT 這類國際巡迴賽只要辦在範圍內就收（WPT Seoul、WPT Cambodia 都收）。
+// 收錄範圍：西太平洋（東亞）+ 東南亞 + 澳洲（2026-09-16 Wei 加入）。依「賽事舉辦地點」判斷，
+// 不是依巡迴賽名稱——WPT、EPT 這類國際巡迴賽只要辦在範圍內就收（WPT Seoul、WPT Cambodia 都收）。
 // 唯一的地點例外是超大型賽事：夏季 WSOP（拉斯維加斯）與冬季 WSOP Paradise（巴哈馬）。
 const ASIA_COUNTRIES = new Set([
   // 東亞 / 西太平洋
@@ -77,6 +77,8 @@ const ASIA_COUNTRIES = new Set([
   // 東南亞
   "philippines", "vietnam", "thailand", "malaysia", "singapore", "indonesia",
   "cambodia", "laos", "myanmar", "burma", "brunei", "timor-leste", "east timor",
+  // 澳洲
+  "australia",
   // 註：南亞（印度、斯里蘭卡、尼泊爾）、中亞（烏茲別克、哈薩克）、西亞（土耳其、
   // 賽普勒斯、喬治亞、亞美尼亞）刻意都不列入——超出「西太平洋 + 東南亞」的範圍。
   // 之後若要收（例如 Poker Dream 斯里蘭卡站變重要了）就把國名加進這裡。
@@ -453,9 +455,10 @@ function listingPrompt(items, today) {
 不同來源的內容彼此獨立，不要混在一起，也不要把某個來源的賽事算到別的來源頭上。
 
 地區規則（一律依「賽事舉辦地點」判斷，不要依巡迴賽的名稱判斷）：
-- 要：東亞與東南亞——台灣、日本、韓國、中國、香港、澳門、蒙古、菲律賓、越南、泰國、馬來西亞、新加坡、印尼、柬埔寨、寮國、緬甸、汶萊。
+- 要：東亞、東南亞、澳洲——台灣、日本、韓國、中國、香港、澳門、蒙古、菲律賓、越南、泰國、馬來西亞、新加坡、印尼、柬埔寨、寮國、緬甸、汶萊、澳洲。
 - WPT、EPT、Triton 這類國際巡迴賽，只要辦在上述地點就要收（例如 WPT Seoul、WPT Cambodia、Triton Jeju 都要）。
-- 不要：上述地點以外的——歐洲、美洲、澳洲、紐西蘭、印度、斯里蘭卡、尼泊爾、中亞、土耳其、賽普勒斯等，即使是知名巡迴賽也不要。
+- 不要：上述地點以外的——歐洲、美洲、紐西蘭、印度、斯里蘭卡、尼泊爾、中亞、土耳其、賽普勒斯等，即使是知名巡迴賽也不要。
+- 只要「錦標賽系列」（一整檔賽事節）。每日／每週的例行賽程表（DAILY SCHEDULE、Weekly、每日賽）不是系列，不要輸出。
 - 唯一的地點例外：「WSOP（世界撲克大賽本賽事，夏季拉斯維加斯）」和「WSOP Paradise（冬季巴哈馬）」這兩個即使不在上述地點也要收。
 
 其他規則：
@@ -678,13 +681,21 @@ async function updateDateCells(client, tab, headers, changes) {
 // 取消的賽事不會被新增，只用來比對既有列然後加註記，所以驗證放寬：
 // 只要名稱和日期站得住腳就好，不要求地點，也不套地區規則
 // （彙整站對取消的場次常常連地點都不填，要求太嚴反而漏掉該註記的）。
+// 每日／每週的例行賽程不是錦標賽系列。2026-09-16 GLPC 官網把「DAILY SCHEDULE 14.9---20.9」
+// 列在 series 區，AI 照抄進來寫進了表格。
+const RECURRING_NAME = /\bdaily\b|\bweekly\b|daily schedule|每日|每週|週賽/i;
+
 export function validateEvent(ev, todayTs) {
   const s = parseYMD(ev["Start Date"]);
   const e = parseYMD(ev["End Date"]);
   if (String(ev.Tournament ?? "").trim().length < 3) return "名稱太短";
+  if (RECURRING_NAME.test(ev.Tournament)) return "例行賽程不是錦標賽系列";
   if (s == null || e == null) return "日期格式不對";
   if (e < s) return "結束早於開始";
   if ((e - s) / 86400_000 > 60) return "賽期超過 60 天（可疑）";
+  // 彙整站的年度日曆頁很雜，AI 偶爾把公告日期當成賽期（WSOP Paradise 被抽成 9/16 單日，
+  // 實際是 12/1–12/18）。錦標賽系列不會只有一天，彙整站來的單日資料一律當誤讀。
+  if (ev._tier === 3 && e === s) return "彙整站的單日賽事（可能誤讀日期）";
   if (e < todayTs - HIDE_ENDED_AFTER_DAYS * 86400_000) return "已結束";
   const year = Number(String(ev["Start Date"]).slice(0, 4));
   const nowYear = Number(taipeiTodayYMD().slice(0, 4));
@@ -754,6 +765,7 @@ const ZH_COUNTRY = {
   china: ["中國", "China"],
   indonesia: ["印尼", "Indonesia"],
   mongolia: ["蒙古", "Mongolia"],
+  australia: ["澳洲", "Australia"],
   bahamas: ["巴哈馬", "Bahamas"],
   "united states": ["美國", "United States"],
 };
@@ -767,6 +779,13 @@ const ZH_CITY = {
   cotai: "路氹", macau: "澳門", "hong kong": "香港", singapore: "新加坡",
   bangkok: "曼谷", "phnom penh": "金邊", sanya: "三亞", hengqin: "橫琴",
   paradise: "天堂島", "las vegas": "拉斯維加斯",
+  // 澳洲：彙整站給的是郊區名，這裡對到大家認得的城市
+  melbourne: "墨爾本", "south melbourne": "墨爾本", southbank: "墨爾本", "southbank, melbourne": "墨爾本",
+  sydney: "雪梨", kogarah: "雪梨", revesby: "雪梨", kingsford: "雪梨", pyrmont: "雪梨",
+  "st johns park": "雪梨", "st. johns park": "雪梨",
+  "surfers paradise": "黃金海岸", "gold coast": "黃金海岸",
+  brisbane: "布里斯本", "red hill": "布里斯本", townsville: "湯斯維爾",
+  adelaide: "阿德雷德", "mawson lakes": "阿德雷德", perth: "伯斯", albury: "奧爾伯里",
 };
 
 // 列表頁本來就寫了買入金額時直接用，省下一次詳情頁的 LLM 呼叫（每日只有 20 次很珍貴）。
@@ -1197,7 +1216,7 @@ async function main() {
   const tally = new Map(); // src -> { raw, kept }
 
   const addEvents = (src, events) => {
-    const t = tally.get(src) ?? { raw: 0, kept: 0 };
+    const t = tally.get(src) ?? { raw: 0, kept: 0, why: new Map() };
     for (const ev of events ?? []) {
       t.raw++;
       if (t.kept >= MAX_NEW_PER_SOURCE) continue; // 單一來源上限，防 LLM 幻覺灌爆表格
@@ -1207,7 +1226,8 @@ async function main() {
       const row = {
         "Start Date": String(ev.start_date ?? "").trim(),
         "End Date": String(ev.end_date ?? "").trim() || String(ev.start_date ?? "").trim(),
-        "Location": String(ev.location ?? "").trim(),
+        // 有些主辦站每場賽事不重複寫城市（都在同一個場館），AI 不一定會從上下文推；來源可以設預設地點
+        "Location": String(ev.location ?? "").trim() || String(src.location ?? "").trim(),
         "Tournament": name,
         ...pickBuyIn(ev),
         // 優先用該場賽事的專屬連結；沒有就退回主辦系列官網；再沒有才留空
@@ -1216,7 +1236,13 @@ async function main() {
         _src: src.name.split(" ")[0],
         _cancelled: ev.cancelled === true,
       };
-      if (validateEvent(row, todayTs)) continue;
+      const bad = validateEvent(row, todayTs);
+      if (bad) {
+        // 記下被退回的原因，log 才看得出「抽到 6 筆通過 0 筆」是為什麼
+        const key = bad.replace(/（.*$/, "");
+        t.why.set(key, (t.why.get(key) ?? 0) + 1);
+        continue;
+      }
       candidates.push(row);
       t.kept++;
     }
@@ -1273,7 +1299,9 @@ async function main() {
 
   for (const src of sources) {
     const t = tally.get(src);
-    if (t) console.log(`✅ T${src.tier} ${src.name}: 抽到 ${t.raw} 筆，通過驗證 ${t.kept} 筆`);
+    if (!t) continue;
+    const why = [...t.why.entries()].map(([k, n]) => `${k} ×${n}`).join("、");
+    console.log(`✅ T${src.tier} ${src.name}: 抽到 ${t.raw} 筆，通過驗證 ${t.kept} 筆${why ? `（退回：${why}）` : ""}`);
   }
 
   if (!candidates.length) {
