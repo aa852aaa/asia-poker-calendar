@@ -288,6 +288,8 @@ eq("RPT Championship Grand Final", seriesLink("RPT Championship Grand Final", SL
   "https://royalpokerclub.vn/");
 eq("AJPC Samurai Circuit - Incheon 2026 III", seriesLink("AJPC Samurai Circuit - Incheon 2026 III", SL),
   "https://samurai.ajpc.jp/en/");
+eq("Poker Dream 26 Malaysia（官網 JS 驗證抓不到，但連結可以給）",
+  seriesLink("Poker Dream 26 Malaysia", SL), "https://pokerdream-live.com/");
 eq("對照表沒有的系列 → 留空，不亂給連結",
   seriesLink("Quads Poker Championship Winter 2026", SL), "");
 eq("空名稱 → 留空", seriesLink("", SL), "");

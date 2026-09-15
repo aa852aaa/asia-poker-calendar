@@ -49,6 +49,7 @@
     { "match": ["Ola Poker Tour", "OLA"], "url": "https://olapokertour.com/series/" },
     { "match": ["JOPT", "Japan Open Poker"], "url": "https://japanopenpoker.com/" },
     { "match": ["P1 Circuit", "P1"], "url": "https://p1-circuit.one/" },
+    { "match": ["Poker Dream"], "url": "https://pokerdream-live.com/" },
     { "match": ["Triton"], "url": "https://tritonpokerseries.com/en-US/events" },
     { "match": ["APT", "Asian Poker Tour"], "url": "https://www.theasianpokertour.com/series" },
     { "match": ["WSOP", "World Series of Poker"], "url": "https://www.wsop.com/schedule/" },
