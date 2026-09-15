@@ -311,14 +311,18 @@ eq("Poker Dream 26 Malaysia（官網 JS 驗證抓不到，但連結可以給）"
   seriesLink("Poker Dream 26 Malaysia", SL), "https://pokerdream-live.com/");
 eq("對照表沒有的系列 → 留空，不亂給連結",
   seriesLink("Super Cup 7 Incheon 2026", SL), "");
-// 澳洲 vs 亞洲的縮寫撞名：APT / APL
-eq("Australian Poker Tour → 澳洲官網（不是亞洲的 APT）",
-  seriesLink("Australian Poker Tour - Melbourne Champs II (VIC)", SL), "https://australianpokertour.com.au/");
-eq("APT Jeju 還是亞洲的 APT", seriesLink("APT Jeju 2026", SL), "https://www.theasianpokertour.com/series");
-eq("APL Million Sydney → 澳洲 playapl（不是韓國的 Ace Poker League）",
-  seriesLink("APL Million Sydney - The Star (NSW)", SL), "https://playapl.com/");
-eq("APLPT Brisbane → 澳洲 playapl", seriesLink("APLPT – Brisbane – Broncos Club (QLD)", SL), "https://playapl.com/");
-eq("APL Jeju 還是韓國的 Ace Poker League", seriesLink("APL Jeju 2026", SL), "https://acepokerleague.com/");
+// 澳洲 vs 亞洲的縮寫撞名：APT / APL —— 靠地點的國家分辨
+const AU = "Townsville, Australia", KR = "Jeju, South Korea";
+eq("APL + 澳洲 → playapl（2026-09-16 真的填錯過：APL - The Ville 600 被填成韓國的）",
+  seriesLink("APL - The Ville 600 - Townsville (QLD)", SL, AU), "https://playapl.com/");
+eq("APL + 韓國 → Ace Poker League", seriesLink("APL Jeju 2026", SL, KR), "https://acepokerleague.com/");
+eq("APL 沒給地點 → 退回沒限定的（韓國）", seriesLink("APL Jeju 2026", SL), "https://acepokerleague.com/");
+eq("APT + 澳洲 → australianpokertour", seriesLink("APT Melbourne Champs", SL, AU), "https://australianpokertour.com.au/");
+eq("APT + 韓國 → 亞洲的 APT", seriesLink("APT Jeju 2026", SL, KR), "https://www.theasianpokertour.com/series");
+eq("Australian Poker Tour 全名 + 澳洲", seriesLink("Australian Poker Tour - Melbourne Champs II (VIC)", SL, AU),
+  "https://australianpokertour.com.au/");
+eq("APLPT + 澳洲", seriesLink("APLPT – Brisbane – Broncos Club (QLD)", SL, AU), "https://playapl.com/");
+eq("地點是雙語格式也能認出國家", seriesLink("APL Cup", SL, "澳洲 雪梨\nSydney, Australia"), "https://playapl.com/");
 eq("Aussie Millions → Crown", seriesLink("2027 Aussie Millions - Crown Melbourne", SL),
   "https://www.crownmelbourne.com.au/casino/table-games/poker");
 eq("空名稱 → 留空", seriesLink("", SL), "");
@@ -425,6 +429,14 @@ eq("只有一模一樣的兩筆被更正", fx.map((f) => f.row).sort(), [88, 92]
 eq("更正成官網", fx[0]?.value, "https://royal-poker.com/en");
 eq("前綴相同但不完全一樣的不動", fx.some((f) => f.row === 70), false);
 eq("沒有更正表 → 空陣列", detectLinkFixes(sheetLinks, {}), []);
+// 條件式更正：同一個錯值只對某些國家的列才算錯
+const mixed = [
+  { _row: 101, Tournament: "APL - The Ville 600", Location: "澳洲 湯斯維爾\nTownsville, Australia", "Handbook URL": "https://acepokerleague.com/" },
+  { _row: 102, Tournament: "APL Jeju 2026", Location: "韓國 濟州島\nJeju, Korea", "Handbook URL": "https://acepokerleague.com/" },
+];
+const cond = detectLinkFixes(mixed, LF);
+eq("澳洲那列被更正成 playapl", cond.find((f) => f.row === 101)?.value, "https://playapl.com/");
+eq("韓國那列不動（對它來說 acepokerleague 是對的）", cond.some((f) => f.row === 102), false);
 eq("更正表是 undefined 也不會爆", detectLinkFixes(sheetLinks, undefined), []);
 ok("更正的值本身不是彙整站", Object.values(LF).every((v) => !/pokercalendar\.asia|somuchpoker\.com/i.test(v)));
 

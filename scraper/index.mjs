@@ -828,10 +828,25 @@ export function applyBrand(name, brand) {
 
 // 抓不到該場賽事的專屬連結時，用 sources.json 的 seriesLinks 補上主辦系列的官網。
 // 依賴彙整站提供連結是錯的做法——彙整站一掛，整輪的連結就全空了（2026-09-10 就是這樣）。
-export function seriesLink(tournament, seriesLinks) {
+// 同一個縮寫在不同地區指不同東西：APL 在澳洲是 Australian Poker League、在韓國是 Ace Poker League；
+// APT 在澳洲是 Australian Poker Tour、在亞洲是 Asian Poker Tour。
+// 對照表的項目可以設 country（字串或陣列），只在賽事地點的國家符合時才採用。有限定的要排在沒限定的前面。
+function countryOf(location) {
+  // 雙語格式是「中文\n英文」，國家取英文那行（最後一行）的最後一段
+  const en = String(location ?? "").split("\n").pop() ?? "";
+  const parts = en.split(",");
+  return parts[parts.length - 1]?.trim().toLowerCase() ?? "";
+}
+
+export function seriesLink(tournament, seriesLinks, location = "") {
   const name = String(tournament ?? "");
   if (!name) return "";
+  const country = countryOf(location);
   for (const entry of seriesLinks ?? []) {
+    if (entry.country) {
+      const allowed = (Array.isArray(entry.country) ? entry.country : [entry.country]).map((c) => c.toLowerCase());
+      if (!allowed.includes(country)) continue;
+    }
     for (const alias of entry.match ?? []) {
       const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       if (new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i").test(name)) return entry.url;
@@ -1136,16 +1151,23 @@ async function writeTodoTab(client, todo, when) {
 // 爬蟲以前寫錯、後來查明的連結（sources.json 的 linkFixes）：既有列的 Handbook URL
 // 完全等於已知錯值時換成正確的。這不需要跟候選比對——掃整張表，只認「一模一樣」的值，
 // 所以 Wei 手填的連結不會被誤改。（RPT 的 royalpokerclub.vn → FB 粉專 就是第一個案例）
+// 更正的值可以是字串（無條件）或 { to, ifCountry }（只對特定國家的列）：
+// 例如 acepokerleague.com 對韓國的 APL 是對的、對澳洲的 APL 是錯的，只能更正澳洲那幾列。
 export function detectLinkFixes(existing, linkFixes) {
   const map = new Map(Object.entries(linkFixes ?? {}).map(([k, v]) => [k.trim(), v]));
   if (!map.size) return [];
   const out = [];
   for (const r of existing) {
     const cur = String(r["Handbook URL"] ?? "").trim();
-    const fixed = map.get(cur);
-    if (fixed && fixed !== cur) {
-      out.push({ row: r._row, tournament: r.Tournament, col: "Handbook URL", value: fixed, why: "更正錯連結" });
+    const rule = map.get(cur);
+    if (!rule) continue;
+    const to = typeof rule === "string" ? rule : rule.to;
+    if (!to || to === cur) continue;
+    if (typeof rule === "object" && rule.ifCountry) {
+      const want = (Array.isArray(rule.ifCountry) ? rule.ifCountry : [rule.ifCountry]).map((c) => c.toLowerCase());
+      if (!want.includes(countryOf(r.Location))) continue;
     }
+    out.push({ row: r._row, tournament: r.Tournament, col: "Handbook URL", value: to, why: "更正錯連結" });
   }
   return out;
 }
@@ -1231,7 +1253,9 @@ async function main() {
         "Tournament": name,
         ...pickBuyIn(ev),
         // 優先用該場賽事的專屬連結；沒有就退回主辦系列官網；再沒有才留空
-        "Handbook URL": cleanLink(ev.detail_url, blacklist) || seriesLink(name, seriesLinks),
+        "Handbook URL":
+          cleanLink(ev.detail_url, blacklist) ||
+          seriesLink(name, seriesLinks, String(ev.location ?? "").trim() || String(src.location ?? "")),
         _tier: src.tier,
         _src: src.name.split(" ")[0],
         _cancelled: ev.cancelled === true,

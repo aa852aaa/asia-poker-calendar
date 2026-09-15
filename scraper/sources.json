@@ -161,12 +161,23 @@
       "note": "澳洲彙整站，Wei 2026-09-16 指定納入。結構化 JSON 不用 AI"
     }
   ],
-  "_連結對照說明": "賽事系列 → 官方網站。抓不到該場賽事的專屬連結時用這個補，不依賴彙整站提供連結。比對用字界、不分大小寫，由上往下第一個命中的就採用，所以多字的、特定的要排前面。要加新系列就在這裡加一行。 ⚠️ 澳洲的 Australian Poker Tour／Australian Poker League 跟亞洲的 APT／APL 縮寫相同，所以澳洲的用全名比對並排在前面。",
+  "_連結對照說明": "賽事系列 → 官方網站。抓不到該場賽事的專屬連結時用這個補，不依賴彙整站提供連結。比對用字界、不分大小寫，由上往下第一個命中的就採用。項目可設 country（只對該國家的賽事生效）——同一個縮寫在不同地區指不同東西（APL：澳洲 Australian Poker League、韓國 Ace Poker League；APT：澳洲 Australian Poker Tour、亞洲 Asian Poker Tour），有國家限定的要排在沒限定的前面。要加新系列就在這裡加一行。",
   "seriesLinks": [
     {
       "match": [
+        "APL",
+        "APLPT",
+        "Australian Poker League"
+      ],
+      "country": "Australia",
+      "url": "https://playapl.com/"
+    },
+    {
+      "match": [
+        "APT",
         "Australian Poker Tour"
       ],
+      "country": "Australia",
       "url": "https://australianpokertour.com.au/"
     },
     {
@@ -174,14 +185,6 @@
         "Aussie Millions"
       ],
       "url": "https://www.crownmelbourne.com.au/casino/table-games/poker"
-    },
-    {
-      "match": [
-        "APL Million",
-        "APLPT",
-        "Australian Poker League"
-      ],
-      "url": "https://playapl.com/"
     },
     {
       "match": [
@@ -376,10 +379,14 @@
       "url": "https://www.worldpokertour.com/"
     }
   ],
-  "_連結更正說明": "爬蟲以前寫錯、後來查明的連結。既有列的 Handbook URL 完全等於左邊的值時，換成右邊的。只動「爬蟲自己寫過的錯值」，Wei 手填的連結不會被碰到（除非剛好一模一樣）。",
+  "_連結更正說明": "爬蟲以前寫錯、後來查明的連結。既有列的 Handbook URL 完全等於左邊的值時，換成右邊的。值可以是字串（無條件）或 { to, ifCountry }（只對該國家的列）。只動「爬蟲自己寫過的錯值」，Wei 手填的連結不會被碰到（除非剛好一模一樣）。",
   "linkFixes": {
     "https://royalpokerclub.vn/": "https://royal-poker.com/en",
-    "https://grandloyal.com.vn/": "https://grandloyal.vn/"
+    "https://grandloyal.com.vn/": "https://grandloyal.vn/",
+    "https://acepokerleague.com/": {
+      "to": "https://playapl.com/",
+      "ifCountry": "Australia"
+    }
   },
   "_黑名單說明": "彙整站網域。從任何來源抽到的連結只要落在這裡就丟棄，絕不寫進 Handbook URL——避免網站上的連結指回別人的彙整站。",
   "linkBlacklist": [
