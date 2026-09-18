@@ -630,25 +630,74 @@ ${SAME_SERIES_RULES(name)}
 ${text}`;
 }
 
+// PDF 走另一條路：不叫 AI「挑」主賽，叫它把賽程表裡所有主賽事等級的賽事都列出來（名稱、買入、保證獎金、原文），
+// 挑哪一個由程式決定（chooseMainEvent）。一份活動節的 PDF 常有好幾個品牌的 Main Event（Jeju Poker Festival 那份
+// 有 KPC、Red Dragon Classic、Red Dragon Plus），lite 模型自己挑會挑到第一個然後說「不是同一場」。
+const PDF_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    series_name: { type: "STRING", description: "這份賽程表的系列／活動名稱（PDF 標題或頁首）" },
+    main_events: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          name: { type: "STRING", description: "賽事名稱原文" },
+          buyin: { type: "NUMBER", nullable: true, description: "買入合計（賽事費＋行政費）" },
+          currency: { type: "STRING", description: "ISO 幣別代碼" },
+          guarantee: { type: "NUMBER", nullable: true, description: "保證獎金，沒有就 null" },
+          evidence: { type: "STRING", description: "PDF 上那一列的原文（名稱＋金額）" },
+        },
+        required: ["name"],
+      },
+    },
+  },
+  required: ["main_events"],
+};
+
 function pdfPrompt(name, fileName) {
   return `附件是撲克賽事系列「${name}」官網提供的賽程表 PDF（檔名 ${fileName}）。
 
-請找出主賽事（Main Event）的買入金額（buy-in）。
+請把賽程表裡**所有主賽事等級的賽事**列出來（main_events）：名稱含 Main Event 的每一個都要列，不同品牌的也要
+（例如同一份 PDF 裡的 KPC Main Event 和 Red Dragon Classic Main Event 都列）。整份沒有任何 Main Event 時，
+才列名稱含 Championship 的。每個賽事只列一筆（Day 1A／1B／Day 2／Final Day 都是同一場，取 Day 1A 那列）。
+不要列：衛星賽（Satellite）、Mini Main Event、High Roller、其他 side event。
 
-注意：
-- 要的是 buy-in（買入費），不是保證獎池（GTD / guarantee / prize pool / 게런티 / 保證獎金）。獎池金額通常大很多，不要拿錯。
-- 賽程表常把買入拆成「賽事費＋行政費」，例如 1,300,000 (1,170,000 + 130,000)：取合計的那個數字（1300000）。
-- 一份 PDF 可能涵蓋好幾個系列、好幾個品牌的 Main Event。只取屬於「${name}」這個系列的主賽事：
-  名稱裡有這個系列的品牌字樣的優先；Mini Main Event、High Roller、衛星賽（Satellite）、Day 2／Final Day 那些列都不算。
-  如果「${name}」是整個活動節的名稱（沒有品牌字樣，例如 Jeju Poker Festival），而 PDF 裡有好幾個品牌各自的
-  Main Event，就取名稱含 Main Event（不含 Mini）、保證獎金最大的那一個——那就是這個活動節的主賽。
-  真的分不出來就輸出 null，不要猜。
-${SAME_SERIES_RULES(name)}
-- me_buyin 只輸出數字；找不到就輸出 null。
-- currency 用 ISO 代碼（TWD、JPY、KRW、USD、PHP、VND、MYR、HKD、SGD、THB、MOP、CNY、AUD、EUR 等），找不到填空字串。
-  表格標題常寫「BUY-IN (KRW)」這種，幣別就從那裡取。
-- 有填 me_buyin 就**一定要**在 buyin_evidence 填「PDF 上寫這個金額的那一列原文」（賽事名稱＋金額）。
-- handbook_url 填空字串。`;
+每一筆填：
+- name：賽事名稱原文
+- buyin：買入合計。賽程表常寫成「1,300,000 (1,170,000 + 130,000)」——取合計的那個數字（1300000）。
+  要的是 buy-in（買入費），不是保證獎池；獎池通常大很多，別填錯欄位。
+- currency：ISO 代碼（KRW、TWD、JPY、USD、PHP、VND、MYR、HKD、SGD、THB、MOP、CNY、AUD、EUR）。
+  表格標題常寫「BUY-IN (KRW)」，幣別就從那裡取。
+- guarantee：保證獎金的數字（「KRW 880 MILLION GTD」→ 880000000），沒有就 null。
+- evidence：PDF 上那一列的原文（賽事名稱＋金額），一定要填。
+
+series_name 填這份賽程表的系列／活動名稱（PDF 標題或頁首，含屆次字樣，例如「RPT Championship IV」）。
+找不到的欄位填 null 或空字串，不要編造。`;
+}
+
+// 從 PDF 列出來的主賽事裡挑「${target}」的那一個：
+//   1. 名稱裡有目標系列的品牌字樣的優先（KPC Series → KPC MAIN EVENT）
+//   2. 目標是活動節名（Jeju Poker Festival）、沒有任何一筆對得上品牌 → 保證獎金最大的那個 Main Event 就是主賽
+//   3. 沒有保證獎金可比 → 買入最大的（已排除 High Roller，剩下的都是主賽等級）
+// 名稱含 mini／satellite／qualifier 的一律不算，AI 沒照規則也擋得住。
+const PDF_EXCLUDE = /\bmini\b|satellite|qualifier|super\s*sat|flip\s*out|freeroll/i;
+export function chooseMainEvent(target, mains) {
+  const list = (Array.isArray(mains) ? mains : [])
+    .filter((m) => m && Number(m.buyin) > 0 && !PDF_EXCLUDE.test(String(m.name ?? "")))
+    .map((m) => ({ ...m, buyin: Number(m.buyin), guarantee: Number(m.guarantee) || 0 }));
+  if (!list.length) return null;
+  const brand = normName(target).split(" ").filter((t) => t.length >= 2 && !NAME_STOPWORDS.has(t) && !/^(series|tour|poker|festival|championship|open|cup|main)$/.test(t));
+  const named = list.filter((m) => {
+    const n = ` ${normName(m.name)} `;
+    return brand.some((t) => n.includes(` ${t} `));
+  });
+  let pool = named.length ? named : list;
+  // 名稱裡真的寫著 Main Event 的優先於「Championship」那種（Red Dragon Plus Championship 獎金更大，但主賽是 Classic Main Event）
+  const mainNamed = pool.filter((m) => /main\s*event/i.test(String(m.name)));
+  if (mainNamed.length) pool = mainNamed;
+  pool.sort((a, b) => b.guarantee - a.guarantee || b.buyin - a.buyin);
+  return pool[0];
 }
 
 // ---------- Google Sheets ----------
@@ -1486,17 +1535,23 @@ async function huntBuyIn(target, ctx) {
     }
     if (!room()) return none;
     await spend();
-    const d = await geminiJSON(pdfPrompt(target.name, fileName), DETAIL_SCHEMA, {
+    const d = await geminiJSON(pdfPrompt(target.name, fileName), PDF_SCHEMA, {
       mimeType: "application/pdf",
       data: buf.toString("base64"),
     });
-    const got = pickBuyIn(d, target.location);
-    if (got["ME Buy-in"] && !acceptSeries(target.name, d)) {
-      notes.push(`賽程 PDF ${fileName} 裡的買入屬於別場（${String(d?.series_name ?? "").slice(0, 40) || "AI 判定不是同一場"}）`);
+    // 這份賽程表是別屆的（RPT 系列頁上的 Championship IV 賽程，問的是 Grand Final）→ 整份不用看
+    if (editionConflict(target.name, d?.series_name)) {
+      notes.push(`賽程 PDF ${fileName} 是別場的（${String(d.series_name).slice(0, 40)}）`);
       return none;
     }
-    if (got["ME Buy-in"]) console.log(`  📄 ${target.name}｜買入來自賽程 PDF ${fileName}`);
-    else notes.push(`賽程 PDF ${fileName} 裡也沒找到主賽買入`);
+    const pick = chooseMainEvent(target.name, d?.main_events);
+    if (!pick) {
+      notes.push(`賽程 PDF ${fileName} 裡沒找到主賽事`);
+      return none;
+    }
+    const got = pickBuyIn({ me_buyin: pick.buyin, currency: pick.currency, buyin_evidence: pick.evidence }, target.location);
+    if (got["ME Buy-in"]) console.log(`  📄 ${target.name}｜買入來自賽程 PDF ${fileName}：${String(pick.name).slice(0, 60)}`);
+    else notes.push(`賽程 PDF ${fileName} 裡的主賽（${String(pick.name).slice(0, 40)}）買入沒通過檢查`);
     return got;
   };
 

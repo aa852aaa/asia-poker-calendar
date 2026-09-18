@@ -10,7 +10,7 @@ import {
   formatLocation, pickBuyIn, seriesLink, detectBlankFills, detailTargets, isTransientSheetsError,
   detectLinkFixes, needsBrowser, buildTodoList, normalizeLink, isGenericLink, sameDomain, hostOf,
   findPdfLinks, isPdfUrl, stripCategoryPrefix, isSameEventStrict, editionTokens, editionConflict, acceptSeries,
-  formatLikeSheet, amountsIn,
+  formatLikeSheet, amountsIn, chooseMainEvent,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -711,6 +711,30 @@ eq("連結文字有 schedule 也算（檔名看不出來）", findPdfLinks("[lin
 eq("同一份只算一次（www／斜線差異）", findPdfLinks("[link:https://www.a.example/s.pdf] x [link:https://a.example/s.pdf] y").length, 1);
 eq("沒有 PDF → 空陣列", findPdfLinks("[link:https://a.example/series] Series [link:https://a.example/news] News"), []);
 eq("空字串不會爆", findPdfLinks(""), []);
+
+console.log("\n【27】PDF 列出的主賽事裡挑哪一個（Jeju Poker Festival 那份 PDF 有三個品牌的主賽）");
+const jpfMains = [
+  { name: "KPC MAIN EVENT DAY 1A (KRW 880 MILLION GTD)", buyin: 1300000, currency: "KRW", guarantee: 880000000, evidence: "KPC MAIN EVENT DAY 1A (KRW 880 MILLION GTD) 1,300,000 (1,170,000 + 130,000)" },
+  { name: "RED DRAGON CLASSIC MAIN EVENT DAY 1A (KRW 1.2 BILLION GTD)", buyin: 2500000, currency: "KRW", guarantee: 1200000000, evidence: "RED DRAGON CLASSIC MAIN EVENT DAY 1A (KRW 1.2 BILLION GTD) 2,500,000 (2,250,000 + 250,000)" },
+  { name: "RED DRAGON PLUS CHAMPIONSHIP DAY 1A (KRW 1.8 BILLION GTD)", buyin: 4000000, currency: "KRW", guarantee: 1800000000, evidence: "RED DRAGON PLUS CHAMPIONSHIP DAY 1A (KRW 1.8 BILLION GTD) 4,000,000" },
+  { name: "RED DRAGON+ MINI MAIN EVENT DAY 1A", buyin: 2500000, currency: "KRW", guarantee: null, evidence: "RED DRAGON+ MINI MAIN EVENT DAY 1A 2,500,000" },
+  { name: "MILESTONE SATELLITE TO KPC MAIN EVENT", buyin: 300000, currency: "KRW", guarantee: null, evidence: "MILESTONE SATELLITE TO KPC MAIN EVENT 300,000" },
+];
+eq("目標是活動節名（沒品牌）→ 名稱含 Main Event、保證獎金最大的：Red Dragon Classic",
+  chooseMainEvent("Jeju Poker Festival 2026", jpfMains)?.buyin, 2500000);
+eq("目標是 KPC → 品牌對得上的那個", chooseMainEvent("KPC Poker Series October 2026", jpfMains)?.buyin, 1300000);
+eq("目標是 Red Dragon → 品牌對上兩筆，Main Event 優先於 Championship", chooseMainEvent("Red Dragon Jeju 2026", jpfMains)?.buyin, 2500000);
+ok("Mini Main Event 和衛星賽永遠不會被挑到", ["Jeju Poker Festival", "KPC", "Red Dragon", "Anything"].every((t) => !/MINI|SATELLITE/.test(chooseMainEvent(t, jpfMains)?.name ?? "")));
+eq("只有 Championship 沒有 Main Event → 挑 Championship", chooseMainEvent("RPT Championship IV", [
+  { name: "RPT CHAMPIONSHIP DAY 1A", buyin: 22000000, currency: "VND", guarantee: 15000000000, evidence: "x" },
+  { name: "RPT HIGH ROLLER SPECIAL", buyin: 55000000, currency: "VND", guarantee: 3500000000, evidence: "y" },
+])?.buyin, 22000000);
+eq("沒有保證獎金可比 → 買入最大的", chooseMainEvent("Poker Dream 26", [
+  { name: "Main Event Day 1A", buyin: 4800, currency: "MYR", guarantee: null, evidence: "a" },
+  { name: "Warm Up Main Event", buyin: 800, currency: "MYR", guarantee: null, evidence: "b" },
+])?.buyin, 4800);
+eq("買入是空的那筆不算", chooseMainEvent("KPC", [{ name: "KPC MAIN EVENT", buyin: null, currency: "KRW" }]), null);
+eq("清單是空的／不是陣列 → null", [chooseMainEvent("KPC", []), chooseMainEvent("KPC", undefined), chooseMainEvent("KPC", "x")], [null, null, null]);
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);
