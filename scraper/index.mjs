@@ -262,6 +262,81 @@ async function fetchPage(url, { json = false } = {}) {
   }
 }
 
+// ---------- 賽程 PDF ----------
+// 不少主辦方（KPC、Red Dragon、USOP）的賽程只放在 PDF 裡，網頁上只有一個連結。
+// 純文字抽取對「整頁是圖」或「字型沒帶對照表、數字全變 ?」的 PDF 沒轍（KPC 就是後者），
+// 所以 PDF 整包直接送給 Gemini——它把每一頁當圖片看，兩種都讀得到。
+
+const PDF_MAX_BYTES = 10 * 1024 * 1024; // Gemini 單次請求上限 20 MB，base64 會膨脹 1/3，抓 10 MB 剛好
+const PDF_PER_TARGET = 2; // 一場賽事最多看幾份 PDF（USOP 一頁就有英／日／中三份，看英文那份就夠）
+
+export function isPdfUrl(url) {
+  return /\.pdf(?:$|[?#])/i.test(String(url ?? ""));
+}
+
+// 從純文字裡的 [link:...] 找出賽程 PDF，最像賽程表的排前面。
+// 頁面上常同時有 player guide、rules、policy 這些 PDF，靠檔名和連結文字挑。
+// KPC 用 pdf.js 檢視器包住檔案（viewer.html?file=/u/cms/...pdf），要把 file 參數拆出來。
+export function findPdfLinks(text) {
+  const out = [];
+  const seen = new Set();
+  const re = /\[link:([^\]]+)\]\s*([^[]{0,80})?/g;
+  let m;
+  while ((m = re.exec(String(text ?? "")))) {
+    let url = m[1].trim();
+    const label = (m[2] ?? "").trim();
+    const wrapped = url.match(/[?&]file=([^&#]+)/);
+    if (wrapped) {
+      try {
+        url = new URL(decodeURIComponent(wrapped[1]), url).href;
+      } catch {
+        continue;
+      }
+    }
+    if (!isPdfUrl(url)) continue;
+    const key = normalizeLink(url);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    let fileName = url.split("/").pop() ?? "";
+    try {
+      fileName = decodeURIComponent(fileName);
+    } catch {
+      /* 檔名編碼怪就用原字串 */
+    }
+    const hay = `${fileName} ${label}`;
+    const schedule = /schedul|賽程|日程|スケジュール|일정|structure/i.test(hay);
+    // 明顯不是賽程的（規則、指南、政策、媒體規範…）跳過，除非它同時也叫 schedule
+    if (!schedule && /guide|rule|polic|term|liab|protect|waiver|media|faq|\bmap\b|menu|sponsor/i.test(hay)) continue;
+    let score = schedule ? 10 : 0;
+    if (/\bevents?\b/i.test(hay)) score += 3;
+    if (/\b(en|eng|english)\b/i.test(hay)) score += 2;
+    if (/\b(jp|jpn|japanese|cn|chn|chinese|kr|kor|korean|zh|tw)\b|日本語|中文|한국/i.test(hay)) score -= 2;
+    out.push({ url, score, order: out.length });
+  }
+  return out.sort((a, b) => b.score - a.score || a.order - b.order).map((x) => x.url);
+}
+
+async function fetchPdf(url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 60_000);
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": UA, Accept: "application/pdf,*/*;q=0.8" },
+      signal: ctrl.signal,
+      redirect: "follow",
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const declared = Number(res.headers.get("content-length") ?? 0);
+    if (declared > PDF_MAX_BYTES) throw new Error(`PDF 太大（${(declared / 1048576).toFixed(1)} MB）`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > PDF_MAX_BYTES) throw new Error(`PDF 太大（${(buf.length / 1048576).toFixed(1)} MB）`);
+    if (!buf.subarray(0, 5).toString("latin1").startsWith("%PDF")) throw new Error("下載到的不是 PDF");
+    return buf;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // JSON 來源專用：PokerCalendar.asia 從 GitHub Actions 抓有時會回 HTML（從一般網路正常），
 // 疑似機房 IP 被防護擋掉。重試一次，並把回傳內容的開頭記進 log 以便判斷是什麼擋的。
 async function fetchJson(src) {
@@ -334,11 +409,13 @@ export function isDailyQuotaError(raw) {
   return /per\s*day|perday|daily/i.test(String(raw));
 }
 
-async function geminiJSON(prompt, schema) {
+// file（可選）= { mimeType, data }：把 PDF 之類的檔案跟提示一起送，data 是 base64。Gemini 會把每一頁當圖片看。
+async function geminiJSON(prompt, schema, file = null) {
   if (dailyQuotaGone) throw new Error("Gemini 今日額度已用完，本輪跳過");
 
+  const parts = file ? [{ inlineData: { mimeType: file.mimeType, data: file.data } }, { text: prompt }] : [{ text: prompt }];
   const body = {
-    contents: [{ parts: [{ text: prompt }] }],
+    contents: [{ parts }],
     generationConfig: {
       temperature: 0,
       responseMimeType: "application/json",
@@ -543,6 +620,24 @@ function detailPrompt(name, text) {
 
 頁面內容：
 ${text}`;
+}
+
+function pdfPrompt(name, fileName) {
+  return `附件是撲克賽事系列「${name}」官網提供的賽程表 PDF（檔名 ${fileName}）。
+
+請找出主賽事（Main Event）的買入金額（buy-in）。
+
+注意：
+- 要的是 buy-in（買入費），不是保證獎池（GTD / guarantee / prize pool / 게런티 / 保證獎金）。獎池金額通常大很多，不要拿錯。
+- 賽程表常把買入拆成「賽事費＋行政費」，例如 1,300,000 (1,170,000 + 130,000)：取合計的那個數字（1300000）。
+- 一份 PDF 可能涵蓋好幾個系列、好幾個品牌的 Main Event。只取屬於「${name}」這個系列的主賽事：
+  名稱裡有這個系列的品牌字樣的優先；Mini Main Event、High Roller、衛星賽（Satellite）、Day 2／Final Day 那些列都不算。
+  真的分不出哪一個屬於這個系列就輸出 null，不要猜。
+- me_buyin 只輸出數字；找不到就輸出 null。
+- currency 用 ISO 代碼（TWD、JPY、KRW、USD、PHP、VND、MYR、HKD、SGD、THB、MOP、CNY、AUD、EUR 等），找不到填空字串。
+  表格標題常寫「BUY-IN (KRW)」這種，幣別就從那裡取。
+- 有填 me_buyin 就**一定要**在 buyin_evidence 填「PDF 上寫這個金額的那一列原文」（賽事名稱＋金額）。
+- handbook_url 填空字串。`;
 }
 
 // ---------- Google Sheets ----------
@@ -1177,6 +1272,134 @@ export function detailTargets(toAppend, existing, blankFills, todayTs) {
   return [...fresh, ...soon];
 }
 
+// ---------- 詳情頁找買入 ----------
+// 一場賽事的買入可能在四個地方：表上那個連結的頁面 → 頁面指出的更深一層專屬頁 → 賽程 PDF →
+// 系列官網（seriesLinks）。依序試，找到就停；一場最多用 4 次 AI 呼叫，額度不會被單一場吃光。
+// 系列官網那步是退路：Red Dragon 的活動頁曾整個掛掉（Auth failed 500），系列頁上卻有賽程 PDF。
+const MAX_CALLS_PER_TARGET = 4;
+const FETCH_FAIL = /HTTP 40[13]|HTTP 5|fetch failed|ECONN|aborted|timeout/i;
+
+function describeFetchError(e) {
+  const msg = String(e?.message ?? e);
+  return FETCH_FAIL.test(msg)
+    ? `從 GitHub 連不上官網（${msg.slice(0, 40)}），可能擋機房 IP`
+    : `抓取失敗（${msg.slice(0, 60)}）`;
+}
+
+function fileNameOf(url) {
+  const raw = String(url ?? "").split(/[?#]/)[0].split("/").pop() ?? "";
+  try {
+    return decodeURIComponent(raw).slice(0, 80);
+  } catch {
+    return raw.slice(0, 80);
+  }
+}
+
+// target = { name, url, location }；ctx = { blacklist, seriesLinks, canCall(), onCall() }
+// 回傳 { got, deeper, why }：got 是 pickBuyIn 的結果，deeper 是頁面指出的專屬頁（沒有就空字串），
+// why 是沒找到時給待補清單的原因。抓網頁／PDF 失敗會記進 why 繼續往下試；Gemini 的錯誤直接往外拋。
+async function huntBuyIn(target, ctx) {
+  const none = { "ME Buy-in": "", Currency: "" };
+  const tried = new Set();
+  const notes = [];
+  const pdfs = [];
+  let calls = 0;
+  let deeper = "";
+  const room = () => calls < MAX_CALLS_PER_TARGET && ctx.canCall();
+  const spend = async () => {
+    await sleep(GEMINI_CALL_GAP_MS);
+    calls++;
+    ctx.onCall();
+  };
+
+  const askPage = async (url, { front = false } = {}) => {
+    const key = normalizeLink(url);
+    if (!key || tried.has(key)) return none;
+    tried.add(key);
+    if (isPdfUrl(url)) {
+      // 表上的連結本身就是 PDF：不用抓網頁，直接排進 PDF 那一步
+      if (!pdfs.includes(url)) pdfs.unshift(url);
+      return none;
+    }
+    let text;
+    try {
+      text = htmlToText(await fetchPage(url), url);
+    } catch (e) {
+      notes.push(describeFetchError(e));
+      return none;
+    }
+    // 專屬頁上的 PDF 比首頁上的更可能是這場的，排前面
+    const found = findPdfLinks(text).filter((p) => !pdfs.includes(p));
+    if (front) pdfs.unshift(...found);
+    else pdfs.push(...found);
+    if (text.length < 300) {
+      notes.push("官網頁面是空殼（內容靠 JS，尚未列入瀏覽器名單）");
+      return none;
+    }
+    if (!room()) return none;
+    await spend();
+    const d = await geminiJSON(detailPrompt(target.name, text), DETAIL_SCHEMA);
+    // 專屬頁面連結只接受同一個網站的（避免被導到別的地方），而且要是還沒看過的
+    const hb = cleanLink(d?.handbook_url, ctx.blacklist);
+    if (!deeper && hb && sameDomain(hb, url) && !tried.has(normalizeLink(hb))) deeper = hb;
+    const got = pickBuyIn(d);
+    if (!got["ME Buy-in"]) notes.push("官網頁面沒列主賽買入");
+    return got;
+  };
+
+  const askPdf = async (url) => {
+    const fileName = fileNameOf(url);
+    let buf;
+    try {
+      buf = await fetchPdf(url);
+    } catch (e) {
+      notes.push(`賽程 PDF ${fileName} 抓不到（${String(e.message).slice(0, 40)}）`);
+      return none;
+    }
+    if (!room()) return none;
+    await spend();
+    const d = await geminiJSON(pdfPrompt(target.name, fileName), DETAIL_SCHEMA, {
+      mimeType: "application/pdf",
+      data: buf.toString("base64"),
+    });
+    const got = pickBuyIn(d);
+    if (got["ME Buy-in"]) console.log(`  📄 ${target.name}｜買入來自賽程 PDF ${fileName}`);
+    else notes.push(`賽程 PDF ${fileName} 裡也沒找到主賽買入`);
+    return got;
+  };
+
+  const tryPdfs = async () => {
+    for (let n = 0; pdfs.length && n < PDF_PER_TARGET && room(); n++) {
+      const got = await askPdf(pdfs.shift());
+      if (got["ME Buy-in"]) return got;
+    }
+    return none;
+  };
+
+  const done = (got) => ({ got, deeper, why: "" });
+
+  // 1. 表上那個連結
+  let got = await askPage(target.url);
+  if (got["ME Buy-in"]) return done(got);
+  // 2. 頁面指出的更深一層專屬頁
+  if (deeper) {
+    got = await askPage(deeper, { front: true });
+    if (got["ME Buy-in"]) return done(got);
+  }
+  // 3. 賽程 PDF
+  got = await tryPdfs();
+  if (got["ME Buy-in"]) return done(got);
+  // 4. 系列官網（表上的連結壞掉或沒東西時的退路）
+  const series = seriesLink(target.name, ctx.seriesLinks, target.location);
+  if (series && room()) {
+    got = await askPage(series);
+    if (got["ME Buy-in"]) return done(got);
+    got = await tryPdfs();
+    if (got["ME Buy-in"]) return done(got);
+  }
+  return { got: none, deeper, why: [...new Set(notes)].join("；") || "官網頁面沒列主賽買入" };
+}
+
 // ---------- 待補清單 ----------
 // 爬蟲補不到的買入，整理成一份清單寫進 Sheet 的「AI_待補」分頁，讓 Wei 照清單人工填。
 // 把「找」的工作自動化、「填」的工作留給人——這是抓不到的資料的兜底。
@@ -1200,7 +1423,8 @@ export function buildTodoList(existing, blankFills, detailOutcome, todayTs) {
     const e = parseYMD(r["End Date"]) ?? s;
     if (s == null || e == null || e < notEnded) continue;
 
-    const link = String(r["Handbook URL"] ?? "").trim() || pendingLink(r);
+    // 這輪剛排入要改的連結（更正／升級）優先——舊的那個就是抓不到才被換掉的
+    const link = pendingLink(r) || String(r["Handbook URL"] ?? "").trim();
     let why;
     if (!link) why = "沒有官網連結，無從抓取——請補連結或直接填買入";
     else if (MANUAL_ONLY_HOSTS.test(link)) why = "官網有人機驗證或要登入，爬蟲抓不到——請人工查";
@@ -1560,37 +1784,34 @@ async function main() {
   if (targets.length) {
     const nNew = targets.filter((t) => t.kind === "new").length;
     console.log(`\n=== 補買入金額與原生連結（新增 ${nNew} 筆 + 既有列 ${targets.length - nNew} 筆）===`);
-    let detailCalls = 0;
-    const host = (u) => new URL(u).hostname.replace(/^www\./, "");
+    let detailCalls = 0; // 這一段用掉的 AI 呼叫次數（網頁、PDF 都算），上限 MAX_DETAIL_CALLS
+    const ctx = {
+      blacklist,
+      seriesLinks,
+      canCall: () => !dailyQuotaGone && detailCalls < MAX_DETAIL_CALLS && geminiCalls < GEMINI_DAILY_BUDGET,
+      onCall: () => detailCalls++,
+    };
+    // 升級連結的共同規則：那格是空的、或只是泛用連結（系列首頁）才換成專屬頁；一樣的就不用寫
+    const upgradable = (current, deeper) =>
+      deeper && normalizeLink(deeper) !== normalizeLink(current) && (!current || isGenericLink(current, genericLinks));
     let stopped = "";
     for (const t of targets) {
       if (dailyQuotaGone) stopped = "本輪額度用完，下次再試";
-      else if (detailCalls >= MAX_DETAIL_CALLS) stopped = `本輪已抓 ${MAX_DETAIL_CALLS} 筆詳情頁，下次再試`;
+      else if (detailCalls >= MAX_DETAIL_CALLS) stopped = `本輪詳情頁的 AI 呼叫已達 ${MAX_DETAIL_CALLS} 次，下次再試`;
       else if (geminiCalls >= GEMINI_DAILY_BUDGET) stopped = "本輪額度用完，下次再試";
       if (stopped) {
         if (t.kind === "existing") detailOutcome.set(t.row._row, stopped);
         continue;
       }
       try {
-        const text = htmlToText(await fetchPage(t.url), t.url);
-        if (text.length < 300) {
-          if (t.kind === "existing") detailOutcome.set(t.row._row, "官網頁面是空殼（內容靠 JS，尚未列入瀏覽器名單）");
-          continue;
-        }
-        await sleep(GEMINI_CALL_GAP_MS);
-        detailCalls++;
-        const d = await geminiJSON(detailPrompt(t.name, text), DETAIL_SCHEMA);
-
-        const got = pickBuyIn(d);
-        // 專屬頁面連結只接受同網域的（避免被導到別的地方）
-        const hb = cleanLink(d?.handbook_url, blacklist);
-        const deeper = hb && host(hb) === host(t.url) && hb !== t.url ? hb : "";
+        const location = t.kind === "new" ? t.ev.Location : t.row.Location;
+        const { got, deeper, why } = await huntBuyIn({ name: t.name, url: t.url, location }, ctx);
 
         if (t.kind === "new") {
           if (got["ME Buy-in"]) Object.assign(t.ev, got);
-          if (deeper) t.ev["Handbook URL"] = deeper;
+          if (upgradable(String(t.ev["Handbook URL"] ?? "").trim(), deeper)) t.ev["Handbook URL"] = deeper;
         } else {
-          // 既有列：只補空的。買入和幣別一起補；連結只在表上那格還是空的時候補（含這輪剛排入的）
+          // 既有列：只補空的。買入和幣別一起補；連結只在表上那格是空的或泛用連結時換（含這輪剛排入的）
           const add = (col, value) => {
             const i = blankFills.findIndex((f) => f.row === t.row._row && f.col === col);
             const entry = { row: t.row._row, tournament: t.row.Tournament, col, value };
@@ -1603,23 +1824,22 @@ async function main() {
             detailOutcome.set(t.row._row, "");
             console.log(`  📝 第 ${t.row._row} 列 ${t.row.Tournament}｜買入 ← ${got.Currency} ${got["ME Buy-in"]}`);
           } else {
-            detailOutcome.set(t.row._row, "官網頁面沒列主賽買入");
+            detailOutcome.set(t.row._row, why);
           }
-          // 詳情頁若指出更深一層的專屬頁，表上那格是空的、或只是泛用連結（系列首頁）時就換成專屬頁
           const current =
             blankFills.find((f) => f.row === t.row._row && f.col === "Handbook URL")?.value ??
             String(t.row["Handbook URL"] ?? "").trim();
-          if (deeper && (!current || isGenericLink(current, genericLinks))) add("Handbook URL", deeper);
+          if (upgradable(current, deeper)) add("Handbook URL", deeper);
         }
       } catch (e) {
-        const why = /HTTP 40[13]|HTTP 5|fetch failed|ECONN|aborted|timeout/i.test(e.message)
-          ? `從 GitHub 連不上官網（${e.message.slice(0, 40)}），可能擋機房 IP`
-          : `抓取失敗（${e.message.slice(0, 60)}）`;
+        // 走到這裡的是 Gemini 的錯誤（額度、連續 503…）；網頁和 PDF 抓不到在 huntBuyIn 裡就處理掉了
+        const why = describeFetchError(e);
         if (t.kind === "existing") detailOutcome.set(t.row._row, why);
         console.warn(`  詳情頁失敗（買入留白）：${t.name} — ${e.message}`);
       }
     }
     if (stopped) console.warn(`  ${stopped}`);
+    console.log(`  詳情頁這段用了 ${detailCalls} 次 AI 呼叫`);
   }
 
   // 有 Source 欄就標記 AI，方便在 Sheet 裡辨識

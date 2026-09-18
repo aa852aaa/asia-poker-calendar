@@ -9,6 +9,7 @@ import {
   applyBrand, festivalDays, isDailyQuotaError, packBatches, stripCancelMark, findSheetRow,
   formatLocation, pickBuyIn, seriesLink, detectBlankFills, detailTargets, isTransientSheetsError,
   detectLinkFixes, needsBrowser, buildTodoList, normalizeLink, isGenericLink, sameDomain, hostOf,
+  findPdfLinks, isPdfUrl,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -314,8 +315,8 @@ eq("KPC Poker Series October 2026", seriesLink("KPC Poker Series October 2026", 
 eq("WPT Seoul 2026（2026-09-19 改指 /events/ 賽程頁）", seriesLink("WPT Seoul 2026", SL), "https://www.worldpokertour.com/events/");
 eq("Triton SHRS Jeju II S5", seriesLink("Triton SHRS Jeju II S5", SL),
   "https://tritonpokerseries.com/en-US/events");
-eq("USOP Grand Championship Vietnam 2026", seriesLink("USOP Grand Championship Vietnam 2026", SL),
-  "https://useriespoker.com/");
+eq("USOP Grand Championship Vietnam 2026（首頁的內部連結全指向 userieschampionship.com，改指那邊的賽程總表）",
+  seriesLink("USOP Grand Championship Vietnam 2026", SL), "https://userieschampionship.com/tournament/");
 // Manila 的場館系列（Megastack／Super Series）改指 PokerStars Live Manila 的賽程頁：那裡才有日期和買入；
 // APPT 本身還是指 APPT 官網
 eq("Manila Megastack 25 → 場館賽程頁", seriesLink("Manila Megastack 25", SL), "https://www.pokerstarslivemanila.com/tournaments/");
@@ -576,6 +577,40 @@ ok("這輪剛排入連結的也算有連結（不會說沒連結）", !/沒有�
 ok("依開賽日排序", todo.every((t, i) => i === 0 || todo[i - 1].start <= t.start));
 eq("地點只取中文那行", todo[0].location, "韓國 濟州島");
 eq("空表 → 空清單", buildTodoList([], [], new Map(), T1), []);
+eq("表上是舊錯連結、這輪排入了更正 → 清單上顯示更正後的",
+  buildTodoList([mkRow(21, "PD 26", 5, { "Handbook URL": "https://pokerdream-live.com/" })],
+    [{ row: 21, col: "Handbook URL", value: "https://www.poker-dream.com/en/tournaments" }], new Map(), T1)[0]?.link,
+  "https://www.poker-dream.com/en/tournaments");
+
+console.log("\n【26】賽程 PDF：從頁面連結裡挑出最像賽程表的（KPC／Red Dragon／USOP 的買入只在 PDF 裡）");
+ok("isPdfUrl：.pdf 結尾", isPdfUrl("https://a.example/x/schedule.pdf"));
+ok("isPdfUrl：.pdf 後面接參數也算", isPdfUrl("https://a.example/x/schedule.PDF?v=2"));
+ok("isPdfUrl：.pdfx 不算", !isPdfUrl("https://a.example/x/schedule.pdfx"));
+ok("isPdfUrl：一般網頁不算", !isPdfUrl("https://a.example/schedule"));
+// KPC：pdf.js 檢視器包住檔案，真正的 PDF 在 file 參數裡（相對路徑）
+const kpcText = "Series [link:https://www.kpcpoker.com/thirdparty/pdfjs/web/viewer.html?file=/u/cms/en/202609/08112324pobw.pdf] [link:https://www.kpcpoker.com/seriesImage/42632.jhtml] News";
+eq("KPC 檢視器連結 → 拆出真正的 PDF 網址", findPdfLinks(kpcText), ["https://www.kpcpoker.com/u/cms/en/202609/08112324pobw.pdf"]);
+// USOP：英／日／中三份賽程 + 兩份政策文件 → 英文賽程第一，政策不要
+const usopText = [
+  "[link:https://u.example/wp-content/uploads/2026/09/USC-Osaka-October-schedule-CN.pdf] EVENT SCHEDULE (CN)",
+  "[link:https://u.example/wp-content/uploads/2025/09/USOP-Player-Protection-and-Liability-Policy-FA.pdf] PLAYER PROTECTION & LIABILTY",
+  "[link:https://u.example/wp-content/uploads/2026/09/USC-Osaka-October-schedule-ENG.pdf] EVENT SCHEDULE (EN)",
+  "[link:https://u.example/wp-content/uploads/2026/09/USC-Osaka-October-schedule-JP.pdf] EVENT SCHEDULE (JP)",
+  "[link:https://u.example/guide/USOP-Players-Guide-EN.pdf] PLAYERS GUIDE (EN)",
+].join(" ");
+const usopPdfs = findPdfLinks(usopText);
+eq("英文賽程排第一", usopPdfs[0], "https://u.example/wp-content/uploads/2026/09/USC-Osaka-October-schedule-ENG.pdf");
+ok("政策、指南文件不在清單裡", usopPdfs.every((u) => !/Policy|Guide/.test(u)));
+eq("三份賽程都在（日中排後面）", usopPdfs.length, 3);
+// Red Dragon 系列頁：Oct–Nov 賽程 vs 夏季那份（檔名沒有 schedule）
+const rdText = "[link:https://playreddragon.com/pdf/17-24-summer2026-compressed.pdf] [img:RDPT Plus Jeju Summer 2026] [link:https://playreddragon.com/pdf/October-November-Schedule-2026.pdf] [img:Jeju Poker Festival 2026]";
+eq("有 schedule 字樣的排前面，另一份也保留當備案", findPdfLinks(rdText),
+  ["https://playreddragon.com/pdf/October-November-Schedule-2026.pdf", "https://playreddragon.com/pdf/17-24-summer2026-compressed.pdf"]);
+eq("連結文字有 schedule 也算（檔名看不出來）", findPdfLinks("[link:https://a.example/files/2026-10.pdf] Tournament Schedule [link:https://a.example/files/rules.pdf] Rules"),
+  ["https://a.example/files/2026-10.pdf"]);
+eq("同一份只算一次（www／斜線差異）", findPdfLinks("[link:https://www.a.example/s.pdf] x [link:https://a.example/s.pdf] y").length, 1);
+eq("沒有 PDF → 空陣列", findPdfLinks("[link:https://a.example/series] Series [link:https://a.example/news] News"), []);
+eq("空字串不會爆", findPdfLinks(""), []);
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);

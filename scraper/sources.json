@@ -345,7 +345,7 @@
         "U Series",
         "USOP"
       ],
-      "url": "https://useriespoker.com/"
+      "url": "https://userieschampionship.com/tournament/"
     },
     {
       "match": [
@@ -409,7 +409,7 @@
       "url": "https://www.worldpokertour.com/events/"
     }
   ],
-  "_連結更正說明": "爬蟲以前寫錯、後來查明的連結。既有列的 Handbook URL 完全等於左邊的值時，換成右邊的。值可以是字串（無條件）或 { to, ifCountry }（只對該國家的列）。只動「爬蟲自己寫過的錯值」，Wei 手填的連結不會被碰到（除非剛好一模一樣）。 2026-09-19 新增：pokerdream-live.com（舊網域）→ poker-dream.com；ajpc-ac.com（網域已死）→ samurai.ajpc.jp；okadamanila.com（賭場首頁）→ PokerStars Live Manila 賽程頁。",
+  "_連結更正說明": "爬蟲以前寫錯、後來查明的連結。既有列的 Handbook URL 完全等於左邊的值時，換成右邊的。值可以是字串（無條件）或 { to, ifCountry }（只對該國家的列）。只動「爬蟲自己寫過的錯值」，Wei 手填的連結不會被碰到（除非剛好一模一樣）。 2026-09-19 新增：pokerdream-live.com（舊網域）→ poker-dream.com；ajpc-ac.com（網域已死）→ samurai.ajpc.jp；okadamanila.com（賭場首頁）→ PokerStars Live Manila 賽程頁。 useriespoker.com 首頁的內部連結全指向 userieschampionship.com（同一家），詳情頁要同網站才會往下走，所以改指後者的賽程總表；worldpokertour.com 首頁改指 /events/。",
   "linkFixes": {
     "https://royalpokerclub.vn/": "https://royal-poker.com/en",
     "https://grandloyal.com.vn/": "https://grandloyal.vn/",
@@ -420,7 +420,9 @@
     "https://pokerdream-live.com/": "https://www.poker-dream.com/en/tournaments",
     "https://ajpc-ac.com/en/": "https://samurai.ajpc.jp/en/",
     "https://ajpc-ac.com/": "https://samurai.ajpc.jp/en/",
-    "http://www.okadamanila.com/": "https://www.pokerstarslivemanila.com/tournaments/"
+    "http://www.okadamanila.com/": "https://www.pokerstarslivemanila.com/tournaments/",
+    "https://useriespoker.com/": "https://userieschampionship.com/tournament/",
+    "https://www.worldpokertour.com/": "https://www.worldpokertour.com/events/"
   },
   "_黑名單說明": "彙整站網域。從任何來源抽到的連結只要落在這裡就丟棄，絕不寫進 Handbook URL——避免網站上的連結指回別人的彙整站。",
   "linkBlacklist": [
