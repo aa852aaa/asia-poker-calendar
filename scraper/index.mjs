@@ -316,6 +316,58 @@ export function findPdfLinks(text) {
   return out.sort((a, b) => b.score - a.score || a.order - b.order).map((x) => x.url);
 }
 
+// PDF 先試著抽文字層（pdfjs），逐列重組（同一列的欄位用「 | 」隔開）。文字層乾淨就送文字——
+// Jeju Poker Festival 那份是一整頁塞了兩週三百多列的大表，當圖片送給 Gemini 會被縮到看不清，
+// 第四輪試跑就把 Red Dragon Classic 的 2,500,000 看成隔壁列的 1,350,000。
+// 文字層壞掉（KPC：字型沒帶對照表，數字全變 �）或整頁是圖（USOP）才退回整包 PDF 當圖片送。
+let pdfjsPromise = null;
+export async function pdfToText(buf, maxPages = 30) {
+  if (!Promise.withResolvers) {
+    // pdfjs 需要 Node 22 的 Promise.withResolvers；本機用 Node 20 跑測試時補一個
+    Promise.withResolvers = function () {
+      let resolve, reject;
+      const promise = new this((a, b) => {
+        resolve = a;
+        reject = b;
+      });
+      return { promise, resolve, reject };
+    };
+  }
+  pdfjsPromise ??= import("pdfjs-dist/legacy/build/pdf.mjs");
+  const pdfjs = await pdfjsPromise;
+  const task = pdfjs.getDocument({ data: new Uint8Array(buf), disableWorker: true, isEvalSupported: false });
+  const doc = await task.promise;
+  const pages = [];
+  try {
+    for (let p = 1; p <= Math.min(doc.numPages, maxPages); p++) {
+      const page = await doc.getPage(p);
+      const content = await page.getTextContent();
+      const rows = new Map(); // y 座標（取整到 3pt）→ 這一列的字
+      for (const it of content.items) {
+        if (!it.str || !it.str.trim()) continue;
+        const y = Math.round(it.transform[5] / 3) * 3;
+        if (!rows.has(y)) rows.set(y, []);
+        rows.get(y).push({ x: it.transform[4], s: it.str.trim() });
+      }
+      const lines = [...rows.entries()]
+        .sort((a, b) => b[0] - a[0]) // PDF 的 y 軸由下往上，反過來才是閱讀順序
+        .map(([, items]) => items.sort((a, b) => a.x - b.x).map((i) => i.s).join(" | "));
+      pages.push(lines.join("\n"));
+    }
+  } finally {
+    await task.destroy().catch(() => {});
+  }
+  return pages.join("\n\n=== 下一頁 ===\n\n");
+}
+
+// 文字層能不能用：要有足夠的字和數字，而且壞字元（�）不能比數字多
+export function pdfTextUsable(text) {
+  const t = String(text ?? "");
+  const digits = (t.match(/\d/g) ?? []).length;
+  const broken = (t.match(/�/g) ?? []).length;
+  return t.length >= 500 && digits >= 30 && broken < digits;
+}
+
 async function fetchPdf(url) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 60_000);
@@ -655,8 +707,11 @@ const PDF_SCHEMA = {
   required: ["main_events"],
 };
 
-function pdfPrompt(name, fileName) {
-  return `附件是撲克賽事系列「${name}」官網提供的賽程表 PDF（檔名 ${fileName}）。
+function pdfPrompt(name, fileName, text = "") {
+  const intro = text
+    ? `以下是撲克賽事系列「${name}」官網賽程表 PDF（檔名 ${fileName}）抽出來的文字，一行一列，同一列的欄位用「 | 」隔開。`
+    : `附件是撲克賽事系列「${name}」官網提供的賽程表 PDF（檔名 ${fileName}）。`;
+  return `${intro}
 
 請把賽程表裡**所有主賽事等級的賽事**列出來（main_events）：名稱含 Main Event 的每一個都要列，不同品牌的也要
 （例如同一份 PDF 裡的 KPC Main Event 和 Red Dragon Classic Main Event 都列）。整份沒有任何 Main Event 時，
@@ -673,7 +728,7 @@ function pdfPrompt(name, fileName) {
 - evidence：PDF 上那一列的原文（賽事名稱＋金額），一定要填。
 
 series_name 填這份賽程表的系列／活動名稱（PDF 標題或頁首，含屆次字樣，例如「RPT Championship IV」）。
-找不到的欄位填 null 或空字串，不要編造。`;
+找不到的欄位填 null 或空字串，不要編造。${text ? `\n\n賽程表內容：\n${text.slice(0, 80_000)}` : ""}`;
 }
 
 // 從 PDF 列出來的主賽事裡挑「${target}」的那一個：
@@ -1535,10 +1590,18 @@ async function huntBuyIn(target, ctx) {
     }
     if (!room()) return none;
     await spend();
-    const d = await geminiJSON(pdfPrompt(target.name, fileName), PDF_SCHEMA, {
-      mimeType: "application/pdf",
-      data: buf.toString("base64"),
+    // 文字層乾淨就送文字（大表當圖片會看錯行），壞掉或整頁是圖才整包當圖片送
+    const text = await pdfToText(buf).catch((e) => {
+      console.warn(`  PDF 文字層抽取失敗（${String(e.message).slice(0, 60)}），改當圖片送`);
+      return "";
     });
+    const asText = pdfTextUsable(text);
+    const d = asText
+      ? await geminiJSON(pdfPrompt(target.name, fileName, text), PDF_SCHEMA)
+      : await geminiJSON(pdfPrompt(target.name, fileName), PDF_SCHEMA, {
+          mimeType: "application/pdf",
+          data: buf.toString("base64"),
+        });
     // 這份賽程表是別屆的（RPT 系列頁上的 Championship IV 賽程，問的是 Grand Final）→ 整份不用看
     if (editionConflict(target.name, d?.series_name)) {
       notes.push(`賽程 PDF ${fileName} 是別場的（${String(d.series_name).slice(0, 40)}）`);
@@ -1550,7 +1613,9 @@ async function huntBuyIn(target, ctx) {
       return none;
     }
     const got = pickBuyIn({ me_buyin: pick.buyin, currency: pick.currency, buyin_evidence: pick.evidence }, target.location);
-    if (got["ME Buy-in"]) console.log(`  📄 ${target.name}｜買入來自賽程 PDF ${fileName}：${String(pick.name).slice(0, 60)}`);
+    if (got["ME Buy-in"]) {
+      console.log(`  📄 ${target.name}｜買入來自賽程 PDF ${fileName}（${asText ? "文字層" : "當圖片看"}）：${String(pick.name).slice(0, 60)}`);
+    }
     else notes.push(`賽程 PDF ${fileName} 裡的主賽（${String(pick.name).slice(0, 40)}）買入沒通過檢查`);
     return got;
   };

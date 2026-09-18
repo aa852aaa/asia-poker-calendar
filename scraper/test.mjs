@@ -10,7 +10,7 @@ import {
   formatLocation, pickBuyIn, seriesLink, detectBlankFills, detailTargets, isTransientSheetsError,
   detectLinkFixes, needsBrowser, buildTodoList, normalizeLink, isGenericLink, sameDomain, hostOf,
   findPdfLinks, isPdfUrl, stripCategoryPrefix, isSameEventStrict, editionTokens, editionConflict, acceptSeries,
-  formatLikeSheet, amountsIn, chooseMainEvent,
+  formatLikeSheet, amountsIn, chooseMainEvent, pdfTextUsable,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -711,6 +711,11 @@ eq("連結文字有 schedule 也算（檔名看不出來）", findPdfLinks("[lin
 eq("同一份只算一次（www／斜線差異）", findPdfLinks("[link:https://www.a.example/s.pdf] x [link:https://a.example/s.pdf] y").length, 1);
 eq("沒有 PDF → 空陣列", findPdfLinks("[link:https://a.example/series] Series [link:https://a.example/news] News"), []);
 eq("空字串不會爆", findPdfLinks(""), []);
+// PDF 的文字層能不能用：乾淨的送文字（大表當圖片會看錯行），數字壞掉（KPC 字型沒對照表）或整頁是圖才當圖片送
+ok("乾淨的賽程表文字 → 用文字", pdfTextUsable("12:00 | 41 | RED DRAGON CLASSIC MAIN EVENT DAY 1A | 2,500,000 | (2,250,000 + 250,000)\n".repeat(20)));
+ok("數字全變 U+FFFD → 不能用", !pdfTextUsable(("KPC MAIN EVENT DAY \uFFFDA | \u20A9\uFFFD,\uFFFD\uFFFD\uFFFD,\uFFFD\uFFFD\uFFFD 12\n").repeat(60)));
+ok("整頁是圖（沒有文字層）→ 不能用", !pdfTextUsable(""));
+ok("太短 → 不能用", !pdfTextUsable("Main Event 1,300,000"));
 
 console.log("\n【27】PDF 列出的主賽事裡挑哪一個（Jeju Poker Festival 那份 PDF 有三個品牌的主賽）");
 const jpfMains = [
