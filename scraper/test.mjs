@@ -8,7 +8,7 @@ import {
   fixCountry, fixCity, isDuplicateConservative, pickReplacementModel,
   applyBrand, festivalDays, isDailyQuotaError, packBatches, stripCancelMark, findSheetRow,
   formatLocation, pickBuyIn, seriesLink, detectBlankFills, detailTargets, isTransientSheetsError,
-  detectLinkFixes, needsBrowser, buildTodoList,
+  detectLinkFixes, needsBrowser, buildTodoList, normalizeLink, isGenericLink, sameDomain, hostOf,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -95,6 +95,13 @@ eq("日期取 T1 主辦方的 11-12", m["Start Date"], "2026-11-12");
 eq("名稱取 T1 的", m.Tournament, "APT Championship, Taipei 2026");
 eq("T1 沒有連結 → 退回 T2 場館的", m["Handbook URL"], "https://ctpclub.app/x");
 eq("最佳 tier 記錄為 1", m._bestTier, 1);
+// 連結是誰給的也要記：升級既有列的泛用連結時只信 tier 1/2 的專屬頁
+const candsHost = cands.map((c) => ({ ...c, _srcHost: ({ 1: "theasianpokertour.com", 2: "ctpclub.app", 3: "pokercalendar.asia" })[c._tier] }));
+const mh = mergeGroup({ idxs: [0, 1, 2] }, candsHost);
+eq("連結來自 T2 → _linkTier 是 2", mh._linkTier, 2);
+eq("連結來源的網站是 CTP", mh._linkHost, "ctpclub.app");
+eq("T1 自己就有連結 → _linkTier 是 1", mergeGroup({ idxs: [0, 1] }, candsHost.map((c, i) => (i === 0 ? { ...c, "Handbook URL": "https://www.theasianpokertour.com/series/x" } : c)))._linkTier, 1);
+eq("沒有任何來源有連結 → Infinity（永遠不會拿來升級）", mergeGroup({ idxs: [0] }, candsHost)._linkTier, Infinity);
 
 console.log("\n【5】改期偵測（你表上的日期是早期公布值，之後主辦方改期）");
 const sheetRow = { _row: 4, Tournament: "APT JEJU 2026", "Start Date": "2026-09-25", "End Date": "2026-10-04" };
@@ -304,13 +311,16 @@ const SL = srcJson.seriesLinks;
 // 2026-09-10 那兩輪實際留白的賽事名，現在都該對得到官網
 eq("KPC Poker Series October 2026", seriesLink("KPC Poker Series October 2026", SL),
   "https://www.kpcpoker.com/?lang=en");
-eq("WPT Seoul 2026", seriesLink("WPT Seoul 2026", SL), "https://www.worldpokertour.com/");
+eq("WPT Seoul 2026（2026-09-19 改指 /events/ 賽程頁）", seriesLink("WPT Seoul 2026", SL), "https://www.worldpokertour.com/events/");
 eq("Triton SHRS Jeju II S5", seriesLink("Triton SHRS Jeju II S5", SL),
   "https://tritonpokerseries.com/en-US/events");
 eq("USOP Grand Championship Vietnam 2026", seriesLink("USOP Grand Championship Vietnam 2026", SL),
   "https://useriespoker.com/");
-eq("Manila Megastack 25", seriesLink("Manila Megastack 25", SL), "https://www.pokerstarslive.com/appt/");
-eq("Manila Super Series 24", seriesLink("Manila Super Series 24", SL), "https://www.pokerstarslive.com/appt/");
+// Manila 的場館系列（Megastack／Super Series）改指 PokerStars Live Manila 的賽程頁：那裡才有日期和買入；
+// APPT 本身還是指 APPT 官網
+eq("Manila Megastack 25 → 場館賽程頁", seriesLink("Manila Megastack 25", SL), "https://www.pokerstarslivemanila.com/tournaments/");
+eq("Manila Super Series 24 → 場館賽程頁", seriesLink("Manila Super Series 24", SL), "https://www.pokerstarslivemanila.com/tournaments/");
+eq("APPT Championship → APPT 官網", seriesLink("APPT Championship", SL), "https://www.pokerstarslive.com/appt/");
 eq("JOPT 2027 Fukuoka #01（補過品牌才對得到）", seriesLink("JOPT 2027 Fukuoka #01", SL),
   "https://japanopenpoker.com/");
 eq("Jeju Poker Festival 2026 → Red Dragon（名稱沒有 RDPT 字樣）",
@@ -323,8 +333,8 @@ eq("RPT Championship Grand Final（官網已更正為 royal-poker.com）", serie
   "https://royal-poker.com/en");
 eq("AJPC Samurai Circuit - Incheon 2026 III", seriesLink("AJPC Samurai Circuit - Incheon 2026 III", SL),
   "https://samurai.ajpc.jp/en/");
-eq("Poker Dream 26 Malaysia（官網 JS 驗證抓不到，但連結可以給）",
-  seriesLink("Poker Dream 26 Malaysia", SL), "https://pokerdream-live.com/");
+eq("Poker Dream 26 Malaysia（2026-09-19 改指沒有人機驗證的新網域）",
+  seriesLink("Poker Dream 26 Malaysia", SL), "https://www.poker-dream.com/en/tournaments");
 eq("對照表沒有的系列 → 留空，不亂給連結",
   seriesLink("Super Cup 7 Incheon 2026", SL), "");
 // 澳洲 vs 亞洲的縮寫撞名：APT / APL —— 靠地點的國家分辨
@@ -385,6 +395,50 @@ eq("舊值已經有中文 → 不動它",
     .some((f) => f.col === "Location"), false);
 eq("補上的欄位帶著列號", detectBlankFills(fresh, sheetOld)[0]?.row, 88);
 
+// 連結升級（2026-09-19）：表上只是系列首頁這種泛用連結時，主辦方／場館方給的專屬頁可以換上去。
+// Poker Dream 26、Manila Super Series 24 的買入官網都有，就是卡在表上的連結只到首頁，詳情頁抓不到東西。
+const GL = new Set(["https://www.pokerstarslive.com/appt/", "https://pokerdream-live.com/", "https://www.poker-dream.com/en/tournaments", "https://godsofpoker.com/series"].map(normalizeLink));
+const manilaRow = { ...sheetOld, _row: 78, Tournament: "Manila Super Series 24", "Handbook URL": "https://www.pokerstarslive.com/appt/", Location: "菲律賓 馬尼拉\nManila, Philippines" };
+const venue = { Tournament: "Manila Super Series 24", Location: "Manila, Philippines", "ME Buy-in": "", Currency: "",
+  "Handbook URL": "https://www.pokerstarslivemanila.com/tournaments/superseries24/", _linkTier: 2, _linkHost: "pokerstarslivemanila.com" };
+const up = detectBlankFills(venue, manilaRow, GL);
+eq("泛用連結 + 場館方給專屬頁 → 升級", up.map((f) => [f.col, f.value, f.why]),
+  [["Handbook URL", "https://www.pokerstarslivemanila.com/tournaments/superseries24/", "升級為專屬連結"]]);
+eq("專屬頁來自彙整站（T3）→ 不升級", detectBlankFills({ ...venue, _linkTier: 3 }, manilaRow, GL), []);
+eq("表上是 Wei 手填的專屬連結 → 不動", detectBlankFills(venue, { ...manilaRow, "Handbook URL": "https://www.pokerstarslive.com/appt/manila/" }, GL), []);
+eq("新的也只是泛用連結 → 不換", detectBlankFills({ ...venue, "Handbook URL": "https://godsofpoker.com/series" }, manilaRow, GL), []);
+eq("新連結不在來源網站也不在舊連結的網站 → 不換（防 AI 撿到贊助商連結）",
+  detectBlankFills({ ...venue, "Handbook URL": "https://sponsor.example/promo" }, manilaRow, GL), []);
+eq("新連結跟舊連結同網站也算（APPT 首頁 → APPT 專頁）",
+  detectBlankFills({ ...venue, "Handbook URL": "https://www.pokerstarslive.com/appt/manila/", _linkHost: "somewhere-else.example" }, manilaRow, GL).length, 1);
+eq("一樣的連結（只差 www／斜線）→ 不算升級", detectBlankFills({ ...venue, "Handbook URL": "https://pokerstarslive.com/appt" }, manilaRow, GL), []);
+eq("沒傳泛用集合 → 一律當成非泛用，不升級", detectBlankFills(venue, manilaRow), []);
+// 以前寫錯的連結（linkFixes 左邊的值）也算泛用：主辦方給專屬頁時直接升級，不必先等更正再等一輪
+const pdRow = { ...sheetOld, _row: 67, Tournament: "Poker Dream 26", "Handbook URL": "https://pokerdream-live.com/", Location: "馬來西亞 雲頂\nGenting Highlands, Malaysia" };
+const pd = { Tournament: "POKER DREAM 26 MALAYSIA", Location: "Genting Highlands, Malaysia", "ME Buy-in": "", Currency: "",
+  "Handbook URL": "https://www.poker-dream.com/tournaments/73e51667-81e4-418a-9cad-17d5ecc012d2", _linkTier: 1, _linkHost: "poker-dream.com" };
+eq("舊網域的錯連結 → 直接升級成新網域的專屬頁", detectBlankFills(pd, pdRow, GL).map((f) => f.why), ["升級為專屬連結"]);
+
+console.log("\n【20b】連結工具：正規化、泛用連結、同網站判定");
+eq("正規化：http/https、www、結尾斜線、大小寫都不算差異", normalizeLink("HTTP://WWW.PokerStarsLive.com/appt/"), "pokerstarslive.com/appt");
+const srcGeneric = new Set();
+for (const e of srcJson.seriesLinks) srcGeneric.add(normalizeLink(e.url));
+for (const s of srcJson.sources) srcGeneric.add(normalizeLink(s.url));
+for (const [k, v] of Object.entries(srcJson.linkFixes)) { srcGeneric.add(normalizeLink(k)); srcGeneric.add(normalizeLink(typeof v === "string" ? v : v.to)); }
+ok("系列官網首頁是泛用連結", isGenericLink("https://www.pokerstarslive.com/appt/", srcGeneric));
+ok("來源列表頁是泛用連結", isGenericLink("https://ctpclub.app/festivals", srcGeneric));
+ok("以前寫錯的連結（更正表左邊）是泛用連結", isGenericLink("https://pokerdream-live.com/", srcGeneric));
+ok("賽事專屬頁不是泛用連結", !isGenericLink("https://www.pokerstarslivemanila.com/tournaments/superseries24/", srcGeneric));
+ok("GOP 的專屬頁不是泛用連結", !isGenericLink("https://godsofpoker.com/series/taipei-2026-ii", srcGeneric));
+ok("空字串不是泛用連結", !isGenericLink("", srcGeneric));
+ok("同網站：子網域算同一個", sameDomain("https://events.japanopenpoker.com/2026-tokyo-03", "https://japanopenpoker.com/"));
+ok("同網站：主機名 vs 網址也能比", sameDomain("https://www.poker-dream.com/tournaments/x", "poker-dream.com"));
+ok("不同網站：poker-dream.com vs pokerdream-live.com", !sameDomain("https://www.poker-dream.com/", "https://pokerdream-live.com/"));
+ok("二級後綴：winwinpoker.com.tw 和 other.com.tw 不是同一個", !sameDomain("https://winwinpoker.com.tw/", "https://other.com.tw/"));
+ok("二級後綴：同一個 .com.tw 網站的內頁算同一個", sameDomain("https://winwinpoker.com.tw/s5", "https://www.winwinpoker.com.tw/"));
+ok("壞掉的網址 → false 不會爆", !sameDomain("not a url", "https://x.example/"));
+eq("hostOf 去掉 www", hostOf("https://www.kpcpoker.com/?lang=en"), "kpcpoker.com");
+
 console.log("\n【21】詳情頁要抓哪些：新增的優先，再來是 3 個月內開賽、買入還空的既有列");
 const T0 = Date.parse("2026-09-11T00:00:00+08:00");
 const day = (n) => new Date(T0 + n * 86400_000).toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" });
@@ -400,8 +454,12 @@ const existingRows = [
   ex(15, "Ended", -30, "", "https://e.example/"),            // 已結束 → 不抓
   ex(16, "[已取消] Soon", 12, "", "https://f.example/"),      // 已取消 → 不抓
   ex(17, "Pending Url", 8, "", ""),                          // 這輪剛排入要補的連結 → 用那個
+  ex(18, "Upgraded Url", 9, "", "https://old-generic.example/"), // 表上有舊連結，但這輪排入了更好的 → 用新的
 ];
-const pending = [{ row: 17, col: "Handbook URL", value: "https://g.example/" }];
+const pending = [
+  { row: 17, col: "Handbook URL", value: "https://g.example/" },
+  { row: 18, col: "Handbook URL", value: "https://new-specific.example/", why: "升級為專屬連結" },
+];
 const newRows = [
   { Tournament: "New A", "Handbook URL": "https://n1.example/", "ME Buy-in": "" },
   { Tournament: "New B", "Handbook URL": "https://n2.example/", "ME Buy-in": "5000" }, // 列表頁已抓到 → 不用
@@ -409,10 +467,11 @@ const newRows = [
 ];
 const tg = detailTargets(newRows, existingRows, pending, T0);
 eq("順序：新增的在前，既有列依開賽日由近到遠",
-  tg.map((t) => t.name), ["New A", "Sooner Blank", "Pending Url", "Soon Blank"]);
+  tg.map((t) => t.name), ["New A", "Sooner Blank", "Pending Url", "Upgraded Url", "Soon Blank"]);
 eq("已有買入 / 沒連結 / 太遠 / 已結束 / 已取消 都不在清單裡",
   tg.some((t) => /Filled|NoUrl|Far|Ended|取消|New B|New C/.test(t.name)), false);
 eq("這輪剛排入要補的連結也算數", tg.find((t) => t.name === "Pending Url")?.url, "https://g.example/");
+eq("這輪排入的更正／升級連結優先於表上的舊連結", tg.find((t) => t.name === "Upgraded Url")?.url, "https://new-specific.example/");
 eq("新增列帶著 ev 物件（結果要寫回去）", tg[0].kind === "new" && tg[0].ev?.Tournament, "New A");
 eq("既有列帶著 row 物件（要知道寫第幾列）", tg[1].kind === "existing" && tg[1].row?._row, 11);
 eq("沒有任何目標 → 空陣列", detailTargets([], [], [], T0), []);
@@ -454,6 +513,15 @@ const cond = detectLinkFixes(mixed, LF);
 eq("澳洲那列被更正成 playapl", cond.find((f) => f.row === 101)?.value, "https://playapl.com/");
 eq("韓國那列不動（對它來說 acepokerleague 是對的）", cond.some((f) => f.row === 102), false);
 eq("更正表是 undefined 也不會爆", detectLinkFixes(sheetLinks, undefined), []);
+// 2026-09-19 查明的三個錯連結
+const wrong3 = [
+  { _row: 67, Tournament: "Poker Dream 26", "Handbook URL": "https://pokerdream-live.com/" },
+  { _row: 96, Tournament: "AJPC Samurai Circuit – Incheon 2026 III", "Handbook URL": "https://ajpc-ac.com/en/" },
+  { _row: 66, Tournament: "APPT Championship", "Handbook URL": "http://www.okadamanila.com/" },
+];
+eq("Poker Dream 舊網域 → 新網域", detectLinkFixes(wrong3, LF).find((f) => f.row === 67)?.value, "https://www.poker-dream.com/en/tournaments");
+eq("ajpc-ac.com（網域已死）→ samurai.ajpc.jp", detectLinkFixes(wrong3, LF).find((f) => f.row === 96)?.value, "https://samurai.ajpc.jp/en/");
+eq("okadamanila.com（賭場首頁）→ PokerStars Live Manila 賽程頁", detectLinkFixes(wrong3, LF).find((f) => f.row === 66)?.value, "https://www.pokerstarslivemanila.com/tournaments/");
 ok("更正的值本身不是彙整站", Object.values(LF).every((v) => !/pokercalendar\.asia|somuchpoker\.com/i.test(v)));
 
 console.log("\n【24】哪些網域要用真瀏覽器（內容靠 JS 載入的）");
@@ -462,6 +530,10 @@ ok("RPT 官網 → 瀏覽器", needsBrowser("https://royal-poker.com/en", BH));
 ok("Red Dragon 內頁 → 瀏覽器（含 www）", needsBrowser("https://www.playreddragon.com/RDPT/jeju-2026.html", BH));
 ok("子網域也算", needsBrowser("https://live.tritonpokerseries.com/x", BH));
 ok("APT 官網 → 純 fetch 就好", !needsBrowser("https://www.theasianpokertour.com/series", BH));
+ok("Poker Dream 新網域 → 瀏覽器", needsBrowser("https://www.poker-dream.com/tournaments/x", BH));
+ok("WPT → 瀏覽器（純 fetch 403）", needsBrowser("https://www.worldpokertour.com/events/", BH));
+ok("Poker Dream 舊網域不在名單（有人機驗證，不繞）", !needsBrowser("https://pokerdream-live.com/", BH));
+ok("PokerStars Live Manila → 純 fetch 就好", !needsBrowser("https://www.pokerstarslivemanila.com/tournaments/", BH));
 ok("壞掉的網址 → false 不會爆", !needsBrowser("not a url", BH));
 ok("每個瀏覽器來源的網域都在 browserHosts 裡",
   srcJson.sources.filter((s) => s.browser).every((s) => needsBrowser(s.url, BH)));

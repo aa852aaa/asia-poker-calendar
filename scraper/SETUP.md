@@ -4,12 +4,13 @@
 
 爬蟲永遠**只新增、不修改、不刪除**任何現有資料。單次最多寫入 60 筆，欄位對不上會自動中止。
 
-## 它怎麼運作（15 個來源，三層優先序）
+## 它怎麼運作（26 個來源，三層優先序）
 
 ```
-Tier 1 主辦賽事方（12 個）  APT / GOP / ZSOP / AJPC / JOPT / OLA / PSC / WPG / APL / APPT / P1 / RDPT
-Tier 2 場館方（1 個）        CTP Club 台北
-Tier 3 彙整站（2 個）        PokerCalendar.asia API（結構化 JSON，不用 AI）、SoMuchPoker 年度日曆
+Tier 1 主辦賽事方（20 個）  APT / GOP / ZSOP / AJPC / JOPT / OLA / PSC / WPG / APL / APPT / P1 / RDPT /
+                            GLPC / RPT / QPC / KPC / Triton / HPC / Poker Dream / WPT
+Tier 2 場館方（3 個）        CTP Club 台北、Win Win Poker 台北、PokerStars Live Manila（Okada）
+Tier 3 彙整站（3 個）        PokerCalendar.asia API、Australian Poker Schedule API（都是結構化 JSON，不用 AI）、SoMuchPoker 年度日曆
 ```
 
 同一場賽事被多個網站列到時，**每個欄位各取 tier 最小（最權威）且有值的來源**。
@@ -54,8 +55,14 @@ GitHub Actions 每次會多花約 1 分鐘裝瀏覽器。要加新的網域就�
 （報名費通常就是這時候公布）。越快開賽的越優先，跟新增的列共用同一份 Gemini 額度。
 
 規則是**只補空白、不覆蓋**：你手填的、或先前抓到的值一律保留。買入和幣別要嘛一起補、
-要嘛都不補（只有金額沒幣別換算不了）。唯一的例外是地點的格式升級——舊列如果是純英文，
-會換成雙語寫法，但只有在確認英文部分指的是同一個地方時才換。
+要嘛都不補（只有金額沒幣別換算不了）。兩個例外：
+
+- **地點的格式升級**——舊列如果是純英文，會換成雙語寫法，但只有在確認英文部分指的是同一個地方時才換。
+- **連結升級**（2026-09-19 起）——表上那格只是「系列官網首頁」這種泛用連結（`seriesLinks` 補的、或
+  `linkFixes` 裡的舊錯值）時，主辦方／場館方（tier 1、2）這輪給了該場賽事的專屬頁，就換成專屬頁；
+  log 會標「（升級為專屬連結）」。專屬頁才有賽程和買入——Poker Dream 26、Manila Super Series 24 的買入
+  官網一直都有，就是卡在連結只到首頁。認的是「一模一樣」的泛用值，你手填的專屬連結不會被動到；
+  新連結還必須跟來源網站（或舊連結）同一個網站，避免 AI 從頁面上撿到贊助商之類的連結。
 
 ## 取消偵測
 
@@ -171,7 +178,7 @@ Gemini 免費額度是按「呼叫次數」算的，而 Tier 1 那些主辦站�
 **不要同一天連續測試**，免費額度撞牆後當天就補不了買入金額了（額度以太平洋時間午夜重置，約台北下午 3 點）。
 
 **Q：怎麼確認改動沒把東西弄壞？**
-`cd scraper && node test.mjs`——211 項純邏輯測試，不需要金鑰也不連網。GitHub Actions 每次跑之前也會先跑一遍。
+`cd scraper && node test.mjs`——260 項純邏輯測試，不需要金鑰也不連網。GitHub Actions 每次跑之前也會先跑一遍。
 
 **Q：地區收錄範圍？**
 **西太平洋（東亞）+ 東南亞 + 澳洲**：台灣、日本、韓國、中國、香港、澳門、蒙古、菲律賓、越南、泰國、

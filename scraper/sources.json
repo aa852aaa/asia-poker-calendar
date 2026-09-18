@@ -110,6 +110,30 @@
       "location": "Taipei, Taiwan"
     },
     {
+      "tier": 1,
+      "name": "Poker Dream",
+      "type": "html",
+      "url": "https://www.poker-dream.com/en/tournaments",
+      "browser": true,
+      "note": "舊網域 pokerdream-live.com 有 JS 人機驗證（不繞）；2026-09-19 發現新網域 poker-dream.com 沒有驗證，只是內容靠 JS，用 Playwright 抓。列表頁每場都有專屬連結 /tournaments/<id>，賽程和買入在專屬頁"
+    },
+    {
+      "tier": 2,
+      "name": "PSLM PokerStars Live Manila",
+      "type": "html",
+      "url": "https://www.pokerstarslivemanila.com/tournaments/",
+      "location": "Manila, Philippines",
+      "note": "Okada Manila 的撲克室。/tournaments/ 一張表就有各系列的日期和主賽買入（Manila Super Series、Megastack、APPT Manila）。頁面也列 APPT Korea，地點提示已叫 AI 照名稱判斷"
+    },
+    {
+      "tier": 1,
+      "name": "WPT World Poker Tour",
+      "type": "html",
+      "url": "https://www.worldpokertour.com/events/",
+      "browser": true,
+      "note": "純 fetch 一律 403，Playwright 可開（GitHub 機房 IP 能不能過，看 2026-09-21 排程）。/events/ 有日期、場館、買入、專屬連結。全球賽事都列，地區規則只會留亞太的"
+    },
+    {
       "tier": 2,
       "name": "WWP Win Win Poker 台北",
       "type": "html",
@@ -225,6 +249,12 @@
         "Manila Megastack",
         "Manila Super Series",
         "Manila Special",
+        "Okada Manila Millions"
+      ],
+      "url": "https://www.pokerstarslivemanila.com/tournaments/"
+    },
+    {
+      "match": [
         "APPT",
         "PokerStars Live"
       ],
@@ -349,7 +379,7 @@
       "match": [
         "Poker Dream"
       ],
-      "url": "https://pokerdream-live.com/"
+      "url": "https://www.poker-dream.com/en/tournaments"
     },
     {
       "match": [
@@ -376,17 +406,21 @@
         "WPT",
         "World Poker Tour"
       ],
-      "url": "https://www.worldpokertour.com/"
+      "url": "https://www.worldpokertour.com/events/"
     }
   ],
-  "_連結更正說明": "爬蟲以前寫錯、後來查明的連結。既有列的 Handbook URL 完全等於左邊的值時，換成右邊的。值可以是字串（無條件）或 { to, ifCountry }（只對該國家的列）。只動「爬蟲自己寫過的錯值」，Wei 手填的連結不會被碰到（除非剛好一模一樣）。",
+  "_連結更正說明": "爬蟲以前寫錯、後來查明的連結。既有列的 Handbook URL 完全等於左邊的值時，換成右邊的。值可以是字串（無條件）或 { to, ifCountry }（只對該國家的列）。只動「爬蟲自己寫過的錯值」，Wei 手填的連結不會被碰到（除非剛好一模一樣）。 2026-09-19 新增：pokerdream-live.com（舊網域）→ poker-dream.com；ajpc-ac.com（網域已死）→ samurai.ajpc.jp；okadamanila.com（賭場首頁）→ PokerStars Live Manila 賽程頁。",
   "linkFixes": {
     "https://royalpokerclub.vn/": "https://royal-poker.com/en",
     "https://grandloyal.com.vn/": "https://grandloyal.vn/",
     "https://acepokerleague.com/": {
       "to": "https://playapl.com/",
       "ifCountry": "Australia"
-    }
+    },
+    "https://pokerdream-live.com/": "https://www.poker-dream.com/en/tournaments",
+    "https://ajpc-ac.com/en/": "https://samurai.ajpc.jp/en/",
+    "https://ajpc-ac.com/": "https://samurai.ajpc.jp/en/",
+    "http://www.okadamanila.com/": "https://www.pokerstarslivemanila.com/tournaments/"
   },
   "_黑名單說明": "彙整站網域。從任何來源抽到的連結只要落在這裡就丟棄，絕不寫進 Handbook URL——避免網站上的連結指回別人的彙整站。",
   "linkBlacklist": [
@@ -399,13 +433,15 @@
     "globalpokerindex.com",
     "jopt.jp"
   ],
-  "_瀏覽器說明": "這些網域的頁面內容靠 JS 載入，純 fetch 只拿到空殼。列表抓取和詳情頁補買入都改用 Playwright 真瀏覽器。",
+  "_瀏覽器說明": "這些網域的頁面內容靠 JS 載入，純 fetch 只拿到空殼。列表抓取和詳情頁補買入都改用 Playwright 真瀏覽器。 poker-dream.com 和 worldpokertour.com 也在這裡：前者是 JS 網頁應用，後者純 fetch 會 403。",
   "browserHosts": [
     "royal-poker.com",
     "kpcpoker.com",
     "tritonpokerseries.com",
     "hpc.poker",
-    "playreddragon.com"
+    "playreddragon.com",
+    "poker-dream.com",
+    "worldpokertour.com"
   ],
   "_預設地點說明": "來源設了 location 的話，抽出來的賽事地點是空的就用它。只給「所有賽事一定在同一個地方」的來源設（CTP 是台北的場館）；ZSOP、HPC 這種巡迴賽不一定在台北，不能設，地點要靠頁面上寫的。"
 }

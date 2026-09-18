@@ -444,7 +444,14 @@ const DETAIL_SCHEMA = {
 function listingPrompt(items, today) {
   const multi = items.length > 1;
   const blocks = items
-    .map((it, i) => `===== 來源 ${i}：${it.src.name} =====\n${it.text}`)
+    .map((it, i) => {
+      // 固定場館的來源（CTP、WWP、PokerStars Live Manila…）頁面上常不重複寫地點，lite 模型不會從上下文推，
+      // 所以在標頭直接告訴它。但場館站也會順便列別處的賽事（Manila 的站列了 APPT Korea），名稱寫了別處就照名稱。
+      const hint = it.src.location
+        ? `（這個來源的賽事預設都在 ${it.src.location}：頁面上沒寫地點的就填 "${it.src.location}"；賽事名稱本身寫了別的城市或國家的，照名稱填）`
+        : "";
+      return `===== 來源 ${i}：${it.src.name}${hint} =====\n${it.text}`;
+    })
     .join("\n\n");
 
   return `你是資料抽取工具。以下是 ${items.length} 個撲克賽程網站列表頁的純文字${
@@ -744,7 +751,16 @@ async function loadSources() {
   }
   out.sort((a, b) => a.tier - b.tier);
   browserHosts = new Set((raw.browserHosts ?? []).map((h) => String(h).toLowerCase().replace(/^www\./, "")));
-  return { sources: out, blacklist, seriesLinks: raw.seriesLinks ?? [], linkFixes: raw.linkFixes ?? {} };
+  // 泛用連結集合（見 isGenericLink）：系列官網、來源列表頁、更正表左右兩邊的值
+  const genericLinks = new Set();
+  for (const e of raw.seriesLinks ?? []) genericLinks.add(normalizeLink(e.url));
+  for (const s of raw.sources ?? []) genericLinks.add(normalizeLink(s.url));
+  for (const [from, rule] of Object.entries(raw.linkFixes ?? {})) {
+    genericLinks.add(normalizeLink(from));
+    genericLinks.add(normalizeLink(typeof rule === "string" ? rule : rule?.to));
+  }
+  genericLinks.delete("");
+  return { sources: out, blacklist, seriesLinks: raw.seriesLinks ?? [], linkFixes: raw.linkFixes ?? {}, genericLinks };
 }
 
 export function festivalDays(ev) {
@@ -890,6 +906,48 @@ export function cleanLink(url, blacklist) {
   return u;
 }
 
+// 連結比對用的正規化：不分大小寫、不管 http/https、不管 www.、不管結尾斜線
+export function normalizeLink(url) {
+  return String(url ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/\/+$/, "");
+}
+
+// 「泛用連結」＝系列官網首頁、來源列表頁、更正表裡的值——都不是某一場賽事的專屬頁。
+// sources.json 載入時算出這個集合（loadSources）。既有列的連結若只是泛用連結，
+// 主辦方這輪給了專屬頁就可以升級（detectBlankFills）；認的是「一模一樣」的值，Wei 手填的專屬連結不會中。
+export function isGenericLink(url, genericLinks) {
+  const n = normalizeLink(url);
+  return !!n && (genericLinks ?? new Set()).has(n);
+}
+
+// 網址 → 主機名（不含 www.）；傳進來的本身就是主機名也行
+export function hostOf(u) {
+  try {
+    return new URL(u).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return String(u ?? "").trim().toLowerCase().replace(/^www\./, "");
+  }
+}
+
+// 兩個網址（或主機名）是不是同一個網站：比對「可註冊網域」——poker-dream.com、events.japanopenpoker.com
+// 和 japanopenpoker.com 算同一個；winwinpoker.com.tw 這種二級後綴要多留一段，不然所有 .com.tw 都會相同
+export function sameDomain(a, b) {
+  const base = (h) => {
+    const parts = hostOf(h).split(".").filter(Boolean);
+    if (parts.length <= 2) return parts.join(".");
+    const sld = parts[parts.length - 2];
+    const tld = parts[parts.length - 1];
+    const twoLevel = /^(com|co|net|org|gov|edu|ac|or|ne)$/.test(sld) && tld.length === 2;
+    return parts.slice(twoLevel ? -3 : -2).join(".");
+  };
+  const x = base(a);
+  return !!x && x === base(b);
+}
+
 // tier 3 的 PokerCalendar.asia：The Events Calendar REST API，結構化資料，不需要 LLM
 export function parseTribeEvents(json, blacklist) {
   return (json.events ?? []).map((e) => {
@@ -989,13 +1047,19 @@ async function groupCandidates(candidates, sheetRows) {
 export function mergeGroup(group, candidates) {
   const rows = group.idxs.map((i) => candidates[i]).sort((a, b) => a._tier - b._tier);
   const out = { ...rows[0] };
+  // 連結是哪個來源給的要記下來：升級既有列的泛用連結時，只信主辦方／場館方（tier 1、2）給的專屬頁
+  let linkDonor = rows[0]["Handbook URL"] ? rows[0] : null;
   for (const f of ["Start Date", "End Date", "Location", "Tournament", "Handbook URL"]) {
     if (out[f]) continue;
     const donor = rows.find((r) => r[f]);
-    if (donor) out[f] = donor[f];
+    if (!donor) continue;
+    out[f] = donor[f];
+    if (f === "Handbook URL") linkDonor = donor;
   }
   out._srcs = rows.map((r) => `T${r._tier}:${r._src}`);
   out._bestTier = rows[0]._tier;
+  out._linkTier = linkDonor ? linkDonor._tier : Infinity;
+  out._linkHost = linkDonor ? String(linkDonor._srcHost ?? "") : "";
   return out;
 }
 
@@ -1039,7 +1103,7 @@ function sameePlace(a, b) {
   return norm(a) === norm(b) && norm(a).length > 0;
 }
 
-export function detectBlankFills(merged, sheetRow) {
+export function detectBlankFills(merged, sheetRow, genericLinks = new Set()) {
   if (!sheetRow) return [];
   const blank = (v) => String(v ?? "").trim() === "";
   const fills = [];
@@ -1050,8 +1114,25 @@ export function detectBlankFills(merged, sheetRow) {
     if (blank(sheetRow.Currency)) fills.push({ col: "Currency", value: merged.Currency });
   }
 
-  if (blank(sheetRow["Handbook URL"]) && !blank(merged["Handbook URL"])) {
-    fills.push({ col: "Handbook URL", value: merged["Handbook URL"] });
+  const oldLink = String(sheetRow["Handbook URL"] ?? "").trim();
+  const newLink = String(merged["Handbook URL"] ?? "").trim();
+  if (!oldLink && newLink) {
+    fills.push({ col: "Handbook URL", value: newLink });
+  } else if (
+    // 連結升級：表上那格只是系列首頁這種泛用連結（seriesLinks 補的、或以前寫錯的），而主辦方／場館方
+    // 這輪給了該場賽事的專屬頁 → 換成專屬頁。專屬頁才有賽程和買入，詳情頁抓買入靠的就是它
+    // （2026-09-19：Poker Dream 26、Manila Super Series 24 的買入官網都有，就是卡在連結只到首頁）。
+    // 三個條件缺一不可：舊的認得出來是泛用連結（一模一樣才算，Wei 手填的專屬連結不會中）、
+    // 新的來自 tier 1/2、新的跟來源網站或舊連結同一個網站（防 AI 從頁面上撿到贊助商之類的連結）。
+    oldLink &&
+    newLink &&
+    normalizeLink(oldLink) !== normalizeLink(newLink) &&
+    isGenericLink(oldLink, genericLinks) &&
+    !isGenericLink(newLink, genericLinks) &&
+    (merged._linkTier ?? Infinity) <= 2 &&
+    (sameDomain(newLink, merged._linkHost) || sameDomain(newLink, oldLink))
+  ) {
+    fills.push({ col: "Handbook URL", value: newLink, why: "升級為專屬連結" });
   }
 
   // 舊列是純英文地點時升級成雙語。只有在確認指的是同一個地方時才換。
@@ -1087,7 +1168,8 @@ export function detailTargets(toAppend, existing, blankFills, todayTs) {
     .map(({ r }) => ({
       kind: "existing",
       row: r,
-      url: String(r["Handbook URL"] ?? "").trim() || pendingUrl(r),
+      // 這輪剛排入要改的連結（更正錯值／升級成專屬頁／補空白）一定比表上現有的好，優先用它抓詳情頁
+      url: pendingUrl(r) || String(r["Handbook URL"] ?? "").trim(),
       name: r.Tournament,
     }))
     .filter((t) => /^https?:\/\//.test(t.url));
@@ -1226,7 +1308,7 @@ export function detectDateChange(merged, sheetRow) {
 // ---------- 主流程 ----------
 
 async function main() {
-  const { sources, blacklist, seriesLinks, linkFixes } = await loadSources();
+  const { sources, blacklist, seriesLinks, linkFixes, genericLinks } = await loadSources();
 
   if (TEST_FETCH) {
     // 不需要金鑰的連線測試：確認每個來源抓得到、文字量正常
@@ -1285,6 +1367,7 @@ async function main() {
           seriesLink(name, seriesLinks, String(ev.location ?? "").trim() || String(src.location ?? "")),
         _tier: src.tier,
         _src: src.name.split(" ")[0],
+        _srcHost: hostOf(src.url), // 連結升級時用來確認專屬頁真的在這個來源的網站上
         _cancelled: ev.cancelled === true,
       };
       const bad = validateEvent(row, todayTs);
@@ -1415,8 +1498,11 @@ async function main() {
         const chg = detectDateChange(row, sheetRow);
         if (chg && !dateChanges.some((c) => c.row === chg.row)) dateChanges.push(chg);
         // 賽程表和報名費是後來才公布的，每輪都回頭補一次空欄位
-        for (const f of detectBlankFills(row, sheetRow)) {
-          if (!blankFills.some((x) => x.row === f.row && x.col === f.col)) blankFills.push(f);
+        for (const f of detectBlankFills(row, sheetRow, genericLinks)) {
+          const i = blankFills.findIndex((x) => x.row === f.row && x.col === f.col);
+          if (i < 0) blankFills.push(f);
+          // 同一格已經排了「更正錯連結」（換成另一個泛用連結）時，主辦方給的專屬頁更好，用專屬頁蓋掉
+          else if (f.why === "升級為專屬連結" && blankFills[i].why === "更正錯連結") blankFills[i] = f;
         }
       }
       continue;
@@ -1432,7 +1518,8 @@ async function main() {
   if (blankFills.length) {
     console.log(`\n=== 📝 補上既有列的 ${blankFills.length} 個空欄位（只補空的，不覆蓋已填的）===`);
     for (const f of blankFills) {
-      console.log(`  第 ${f.row} 列 ${f.tournament}｜${f.col} ← ${String(f.value).replace(/\n/g, " / ")}`);
+      const why = f.why ? `（${f.why}）` : "";
+      console.log(`  第 ${f.row} 列 ${f.tournament}｜${f.col} ← ${String(f.value).replace(/\n/g, " / ")}${why}`);
     }
   }
 
@@ -1518,7 +1605,11 @@ async function main() {
           } else {
             detailOutcome.set(t.row._row, "官網頁面沒列主賽買入");
           }
-          if (deeper && !String(t.row["Handbook URL"] ?? "").trim()) add("Handbook URL", deeper);
+          // 詳情頁若指出更深一層的專屬頁，表上那格是空的、或只是泛用連結（系列首頁）時就換成專屬頁
+          const current =
+            blankFills.find((f) => f.row === t.row._row && f.col === "Handbook URL")?.value ??
+            String(t.row["Handbook URL"] ?? "").trim();
+          if (deeper && (!current || isGenericLink(current, genericLinks))) add("Handbook URL", deeper);
         }
       } catch (e) {
         const why = /HTTP 40[13]|HTTP 5|fetch failed|ECONN|aborted|timeout/i.test(e.message)
@@ -1540,7 +1631,10 @@ async function main() {
     delete ev._tier;
     delete ev._src;
     delete ev._srcs;
+    delete ev._srcHost;
     delete ev._bestTier;
+    delete ev._linkTier;
+    delete ev._linkHost;
     if (headers.includes("Source")) ev["Source"] = "AI";
   }
 
