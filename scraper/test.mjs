@@ -10,7 +10,7 @@ import {
   formatLocation, pickBuyIn, seriesLink, detectBlankFills, detailTargets, isTransientSheetsError,
   detectLinkFixes, needsBrowser, buildTodoList, normalizeLink, isGenericLink, sameDomain, hostOf,
   findPdfLinks, isPdfUrl, stripCategoryPrefix, isSameEventStrict, editionTokens, editionConflict, acceptSeries,
-  formatLikeSheet,
+  formatLikeSheet, amountsIn,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -96,6 +96,21 @@ const m = mergeGroup({ idxs: [2, 0, 1] }, cands); // 故意亂序，確認有依
 eq("日期取 T1 主辦方的 11-12", m["Start Date"], "2026-11-12");
 eq("名稱取 T1 的", m.Tournament, "APT Championship, Taipei 2026");
 eq("T1 沒有連結 → 退回 T2 場館的", m["Handbook URL"], "https://ctpclub.app/x");
+// 買入也一樣：APPT 官網（T1）列了 Megastack 25 但沒買入，場館站（T2）有 → 要拿到
+const mb = mergeGroup({ idxs: [0, 1] }, [
+  { ...cands[0], "ME Buy-in": "", Currency: "" },
+  { ...cands[1], "ME Buy-in": "45000", Currency: "PHP" },
+]);
+eq("T1 沒買入 → 用 T2 的買入", mb["ME Buy-in"], "45000");
+eq("幣別跟著同一筆來", mb.Currency, "PHP");
+eq("T1 自己有買入 → 不被 T2 蓋掉", mergeGroup({ idxs: [0, 1] }, [
+  { ...cands[0], "ME Buy-in": "30000", Currency: "TWD" },
+  { ...cands[1], "ME Buy-in": "45000", Currency: "PHP" },
+])["ME Buy-in"], "30000");
+eq("只有金額沒幣別的那筆不算", mergeGroup({ idxs: [0, 1] }, [
+  { ...cands[0], "ME Buy-in": "", Currency: "" },
+  { ...cands[1], "ME Buy-in": "45000", Currency: "" },
+])["ME Buy-in"], "");
 eq("最佳 tier 記錄為 1", m._bestTier, 1);
 // 連結是誰給的也要記：升級既有列的泛用連結時只信 tier 1/2 的專屬頁
 const candsHost = cands.map((c) => ({ ...c, _srcHost: ({ 1: "theasianpokertour.com", 2: "ctpclub.app", 3: "pokercalendar.asia" })[c._tier] }));
@@ -351,7 +366,29 @@ eq("原文明寫 USD → 不改", pickBuyIn({ ...auEv, buyin_evidence: "Buy-In: 
 eq("不是澳洲 → 不改", pickBuyIn(auEv, "Phnom Penh, Cambodia").Currency, "USD");
 eq("沒給地點 → 不改", pickBuyIn(auEv).Currency, "USD");
 
-console.log("\n【18b】詳情頁答的買入是不是同一場（RPT 首頁列 Championship IV，問的是 Grand Final）");
+// 原文有 GTD 字樣但沒有「買入」字樣：賽程表的賽事名稱裡常常就寫著 GTD，不能一律擋。
+// 看原文裡有沒有另一個大得多的數字——有的話 GTD 說的是那個，這個數字才是買入
+eq("KPC 賽程列：名稱含 880 MILLION GTD，1,300,000 是買入 → 收",
+  pickBuyIn({ me_buyin: 1300000, currency: "KRW", buyin_evidence: "KPC MAIN EVENT DAY 1A (KRW 880 MILLION GTD) 1,300,000 (1,170,000 + 130,000)" })["ME Buy-in"], "1300000");
+eq("Manila 表格：₱50M+ GTD … ₱45,000 Main Event ₱20M GTD → 收",
+  pickBuyIn({ me_buyin: 45000, currency: "PHP", buyin_evidence: "Manila Megastack 25 ₱50M+ GTD (around $800K) November 26-December 7, 2026 ₱45,000 Main Event ₱20M GTD" })["ME Buy-in"], "45000");
+eq("Poker Dream：Main Event (MYR 4M GTD) … 4,800 → 收",
+  pickBuyIn({ me_buyin: 4800, currency: "MYR", buyin_evidence: "#38/A Main Event (MYR 4M GTD) - Day 1A - Play Down To 15% 4,800" })["ME Buy-in"], "4800");
+eq("WWP：原文只有保證獎金那個數字 → 不收",
+  pickBuyIn({ me_buyin: 10000000, currency: "TWD", buyin_evidence: "主賽保證獎金 $10,000,000 NTD" })["ME Buy-in"], "");
+eq("原文裡的另一個數字比較小（那才是買入）→ AI 拿錯了，不收",
+  pickBuyIn({ me_buyin: 1000000, currency: "PHP", buyin_evidence: "Main Event ₱1,000,000 GTD, ₱18,500" })["ME Buy-in"], "");
+eq("有買入字樣就照舊直接收", pickBuyIn({ me_buyin: 27500000, currency: "VND", buyin_evidence: "RPT MAIN EVENT Buy-in 27.5M GTD 20B" })["ME Buy-in"], "27500000");
+
+console.log("\n【18c】文字裡的金額（含 27.5M、20B、880 MILLION、3萬 這些寫法）");
+eq("逗號千分位", amountsIn("1,300,000 (1,170,000 + 130,000)"), [1300000, 1170000, 130000]);
+eq("M／B 單位", amountsIn("Buy-in 27.5M GTD 20B"), [27500000, 20000000000]);
+eq("MILLION 全字", amountsIn("KRW 880 MILLION GTD"), [880000000]);
+eq("50M+ 也算", amountsIn("₱50M+ GTD"), [50000000]);
+eq("單位後面接字母就不是單位（MAIN 的 M）", amountsIn("1,300,000 MAIN EVENT"), [1300000]);
+eq("中文單位", amountsIn("保證 3萬、總獎池 2億"), [30000, 200000000]);
+eq("沒有數字 → 空", amountsIn("Main Event"), []);
+
 eq("屆次記號：數字、羅馬數字、#、Q、S、季節、Grand Final／Warm-up", [...editionTokens("RPT Championship IV")], ["4"]);
 eq("Grand Final 是一個記號", [...editionTokens("RPT Championship Grand Final")], ["grandfinal"]);
 eq("Poker Dream 26 → 26（年份不算）", [...editionTokens("Poker Dream 26 Malaysia 2026")], ["26"]);

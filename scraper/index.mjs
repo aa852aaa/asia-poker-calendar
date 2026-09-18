@@ -939,6 +939,22 @@ const MAX_BUYIN_USD = 300_000;
 const BUYIN_WORDS = /buy.?in|entry\s*fee|entry|買入|報名費|參賽費|バイイン|바이인/i;
 const GTD_WORDS = /\bgtd\b|guarante|保證|保底|獎池|獎金|prize\s*pool|総額|賞金|게런티|보장|프라이즈/i;
 
+// 一段文字裡所有的金額，含 27.5M、20B、880 MILLION、50M+、1.8 billion、3萬、2億 這些寫法
+const AMOUNT_SUFFIX = { k: 1e3, m: 1e6, b: 1e9, million: 1e6, billion: 1e9, 萬: 1e4, 万: 1e4, 億: 1e8, 亿: 1e8 };
+export function amountsIn(text) {
+  const out = [];
+  // 英文單位後面不能再接字母（「1,300,000 MAIN」的 M 不是百萬）
+  const re = /(\d(?:[\d,]*\d)?(?:\.\d+)?)(?![\d,.])\s*(?:(k|m|b|million|billion)(?![a-z])|(萬|万|億|亿))?/gi;
+  let m;
+  while ((m = re.exec(String(text ?? "")))) {
+    const base = Number(m[1].replace(/,/g, ""));
+    if (!Number.isFinite(base)) continue;
+    const unit = (m[2] ?? "").toLowerCase() || m[3] || "";
+    out.push(base * (AMOUNT_SUFFIX[unit] ?? 1));
+  }
+  return out;
+}
+
 export function pickBuyIn(ev, location = "") {
   const blank = { "ME Buy-in": "", Currency: "" };
   const n = Number(ev?.me_buyin);
@@ -951,7 +967,13 @@ export function pickBuyIn(ev, location = "") {
   // 沒附原文的一律不信：這個數字會直接公開在網站上，寧可留白等下次
   const evidence = String(ev?.buyin_evidence ?? "").trim();
   if (!evidence) return blank;
-  if (GTD_WORDS.test(evidence) && !BUYIN_WORDS.test(evidence)) return blank;
+  // 原文有「保證獎金」字樣卻沒有「買入」字樣時，看原文裡還有沒有另一個大得多的數字：
+  // 有（「KPC MAIN EVENT (KRW 880 MILLION GTD) 1,300,000」的 880 MILLION）→ GTD 說的是那個，這個數字是買入；
+  // 沒有（「主賽保證獎金 $10,000,000 NTD」）→ 這個數字自己就是獎池，不收。
+  // 賽程表的賽事名稱裡常常就寫著 GTD，光靠字樣會把真的買入也擋掉（2026-09-19 第二輪試跑 KPC、Megastack 就是這樣）。
+  if (GTD_WORDS.test(evidence) && !BUYIN_WORDS.test(evidence) && !amountsIn(evidence).some((v) => v >= n * 10)) {
+    return blank;
+  }
 
   // 澳洲場館的「$5,000」是澳幣，AI 常直接當美金（2026-09-19 試跑：同一個 WPT 站一筆 AUD 一筆 USD）。
   // 原文沒明寫 USD／US$ 就改成 AUD。
@@ -1242,6 +1264,15 @@ export function mergeGroup(group, candidates) {
     if (!donor) continue;
     out[f] = donor[f];
     if (f === "Handbook URL") linkDonor = donor;
+  }
+  // 買入和幣別一起拿：tier 最小、而且兩個都有的那筆（APPT 官網列了 Megastack 25 但沒買入，
+  // 場館站有——以前這格只看 tier 最小的那筆，場館站的買入就被丟掉了，2026-09-19 第二輪試跑發現）
+  if (!out["ME Buy-in"] || !out.Currency) {
+    const donor = rows.find((r) => r["ME Buy-in"] && r.Currency);
+    if (donor) {
+      out["ME Buy-in"] = donor["ME Buy-in"];
+      out.Currency = donor.Currency;
+    }
   }
   out._srcs = rows.map((r) => `T${r._tier}:${r._src}`);
   out._bestTier = rows[0]._tier;
