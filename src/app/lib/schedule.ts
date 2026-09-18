@@ -26,6 +26,9 @@ const ALWAYS_SHOW_SERIES: string[] = [
   "MGM",                        // MGM Poker Championship，澳門唯一的系列
   "KPC", "Korea Poker Cup",
   "RDPT", "Jeju Poker Festival", // Red Dragon 的賽事有時不掛 RDPT 前綴
+  // 澳洲（2026-09-19 Wei 拍板）：只有這兩個豁免；Australian Poker Tour、APLPT、Kings、Crown、PlayLive、Aurum 都看買入
+  "Aussie Millions",
+  "APL Million",                // 雪梨 The Star 的 APL Million；不會誤中「APL - The Ville 600」那種一般 APL 站
 ];
 
 function matchesSeries(text: string, series: string): boolean {
