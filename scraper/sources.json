@@ -131,7 +131,8 @@
       "type": "html",
       "url": "https://www.worldpokertour.com/events/",
       "browser": true,
-      "note": "純 fetch 一律 403，Playwright 可開（GitHub 機房 IP 能不能過，看 2026-09-21 排程）。/events/ 有日期、場館、買入、專屬連結。全球賽事都列，地區規則只會留亞太的"
+      "note": "純 fetch 一律 403，Playwright 可開（2026-09-19 試跑從 GitHub 機房也過了）。/events/ 有日期、場館、買入、專屬連結。全球賽事都列，地區規則只會留亞太的。列的是主賽事日期不是整檔賽事節（WPT Seoul 官網 11/05–09，表上 10/30–11/09），所以 noDateUpdate：日期只拿來新增列，不拿來改表上既有的",
+      "noDateUpdate": true
     },
     {
       "tier": 2,
@@ -445,5 +446,5 @@
     "poker-dream.com",
     "worldpokertour.com"
   ],
-  "_預設地點說明": "來源設了 location 的話，抽出來的賽事地點是空的就用它。只給「所有賽事一定在同一個地方」的來源設（CTP 是台北的場館）；ZSOP、HPC 這種巡迴賽不一定在台北，不能設，地點要靠頁面上寫的。"
+  "_預設地點說明": "來源設了 location 的話，抽出來的賽事地點是空的就用它。只給「所有賽事一定在同一個地方」的來源設（CTP 是台北的場館）；ZSOP、HPC 這種巡迴賽不一定在台北，不能設，地點要靠頁面上寫的。 noDateUpdate: true 的來源，日期只用來新增列、不拿來改表上既有列的日期（官網只列主賽事日期、比整檔賽事節短的站，例如 WPT）。"
 }

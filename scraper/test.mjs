@@ -9,7 +9,8 @@ import {
   applyBrand, festivalDays, isDailyQuotaError, packBatches, stripCancelMark, findSheetRow,
   formatLocation, pickBuyIn, seriesLink, detectBlankFills, detailTargets, isTransientSheetsError,
   detectLinkFixes, needsBrowser, buildTodoList, normalizeLink, isGenericLink, sameDomain, hostOf,
-  findPdfLinks, isPdfUrl,
+  findPdfLinks, isPdfUrl, stripCategoryPrefix, isSameEventStrict, editionTokens, editionConflict, acceptSeries,
+  formatLikeSheet,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -103,6 +104,8 @@ eq("連結來自 T2 → _linkTier 是 2", mh._linkTier, 2);
 eq("連結來源的網站是 CTP", mh._linkHost, "ctpclub.app");
 eq("T1 自己就有連結 → _linkTier 是 1", mergeGroup({ idxs: [0, 1] }, candsHost.map((c, i) => (i === 0 ? { ...c, "Handbook URL": "https://www.theasianpokertour.com/series/x" } : c)))._linkTier, 1);
 eq("沒有任何來源有連結 → Infinity（永遠不會拿來升級）", mergeGroup({ idxs: [0] }, candsHost)._linkTier, Infinity);
+eq("日期來源標了 noDateUpdate → 合併結果也帶著", mergeGroup({ idxs: [0, 1] }, candsHost.map((c, i) => (i === 0 ? { ...c, _noDateUpdate: true } : c)))._noDateUpdate, true);
+eq("沒標的 → false", mergeGroup({ idxs: [0, 1] }, candsHost)._noDateUpdate, false);
 
 console.log("\n【5】改期偵測（你表上的日期是早期公布值，之後主辦方改期）");
 const sheetRow = { _row: 4, Tournament: "APT JEJU 2026", "Start Date": "2026-09-25", "End Date": "2026-10-04" };
@@ -119,6 +122,10 @@ ok("日期完全相同 → 不回報",
 ok("差超過 45 天 → 不當成改期（可能根本不是同一場）",
   detectDateChange({ "Start Date": "2027-03-01", "End Date": "2027-03-10", _bestTier: 1, _srcs: ["T1:APT"] }, sheetRow) === null);
 ok("對不到列 → 不回報", detectDateChange(fromT1, null) === null);
+
+// WPT 官網列的是主賽事日期，不是整檔賽事節；標了 noDateUpdate 的來源不拿來改表上的日期
+eq("noDateUpdate 的來源 → 日期不同也不改", detectDateChange({ "Start Date": "2026-11-05", "End Date": "2026-11-09", _bestTier: 1, _noDateUpdate: true },
+  { _row: 81, Tournament: "WPT Seoul 2026", "Start Date": "2026/10/30", "End Date": "2026/11/09" }), null);
 
 console.log("\n【6】寫入驗證");
 const todayTs = Date.parse("2026-09-09T00:00:00+08:00");
@@ -154,6 +161,11 @@ eq("第 6 欄 = G", colLetter(6), "G");
 eq("第 25 欄 = Z", colLetter(25), "Z");
 eq("第 26 欄 = AA", colLetter(26), "AA");
 
+eq("日期寫回表上照原本的斜線寫法", formatLikeSheet("2026-11-25", "2026/11/26"), "2026/11/25");
+eq("表上是橫線就用橫線", formatLikeSheet("2026/11/25", "2026-11-26"), "2026-11-25");
+eq("月日補零", formatLikeSheet("2026-1-5", "2026/11/26"), "2026/01/05");
+eq("不是日期就原樣", formatLikeSheet("TBA", "2026/11/26"), "TBA");
+
 console.log("\n【8】HTML 轉文字：保留 img alt（Red Dragon 的賽事名只存在 alt 裡）");
 const html = `<div><!-- <img alt="註解掉的舊賽事"> --><a href="/RDPT/jeju-2026.html"><img class="x" src="a.png" alt="Jeju Poker Festival 2026"/></a></div>`;
 const txt = htmlToText(html, "https://playreddragon.com/series-schedule.html");
@@ -172,6 +184,26 @@ ok("日期完全不重疊 → 不是重複",
 ok("同名同日期 → 是重複",
   isDuplicateConservative({ Tournament: "HPC", "Start Date": "2026-09-30", "End Date": "2026-10-04" }, sheet));
 
+// LLM 分組漏掉時的最後防線：名稱幾乎一樣（短的整段在長的裡面）+ 日期重疊 → 同一場
+const seoulRow = { _row: 81, Tournament: "WPT Seoul 2026", "Start Date": "2026/10/30", "End Date": "2026/11/09" };
+ok("「WPT Seoul」（去掉分類前綴後）vs「WPT Seoul 2026」日期重疊 → 同一場",
+  isSameEventStrict({ Tournament: "WPT Seoul", "Start Date": "2026-11-05", "End Date": "2026-11-09" }, seoulRow));
+ok("連分類前綴都還在也認得（Special Event 是虛詞）",
+  isSameEventStrict({ Tournament: "Special Event: WPT Seoul", "Start Date": "2026-11-05", "End Date": "2026-11-09" }, seoulRow));
+ok("Poker Dream 26 ⊂ POKER DREAM 26 MALAYSIA", isSameEventStrict({ Tournament: "POKER DREAM 26 MALAYSIA", "Start Date": "2026-10-08", "End Date": "2026-10-19" },
+  { Tournament: "Poker Dream 26", "Start Date": "2026/10/08", "End Date": "2026/10/19" }));
+ok("日期不重疊 → 不算（同名的下一屆）", !isSameEventStrict({ Tournament: "WPT Seoul", "Start Date": "2027-11-05", "End Date": "2027-11-09" }, seoulRow));
+ok("Megastack Warm-up vs Megastack 25：日期相鄰但名稱互不包含 → 不算",
+  !isSameEventStrict({ Tournament: "Manila Megastack Warm-up", "Start Date": "2026-11-23", "End Date": "2026-11-25" },
+    { Tournament: "Manila Megastack 25", "Start Date": "2026/11/26", "End Date": "2026/12/07" }));
+ok("WPT Prime Australia vs WPT Australia：中間多了 Prime，不是整段包含 → 不算",
+  !isSameEventStrict({ Tournament: "WPT Prime Australia Championship", "Start Date": "2026-09-17", "End Date": "2026-09-23" },
+    { Tournament: "WPT Australia 2026", "Start Date": "2026/09/10", "End Date": "2026/09/30" }));
+ok("短的只有一個字 → 不算（APPT vs APPT Manila 太容易誤判）",
+  !isSameEventStrict({ Tournament: "APPT", "Start Date": "2026-10-08", "End Date": "2026-10-19" },
+    { Tournament: "APPT Manila Championship", "Start Date": "2026/10/08", "End Date": "2026/10/19" }));
+ok("表上那列是空的 → 不算", !isSameEventStrict({ Tournament: "WPT Seoul", "Start Date": "2026-11-05", "End Date": "2026-11-09" }, { Tournament: "", "Start Date": "", "End Date": "" }));
+
 console.log("\n【10】模型下架時自動換模型（2026-09-08 真的發生過）");
 const real404 = JSON.stringify({ error: { code: 404,
   message: "This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements.",
@@ -188,6 +220,11 @@ eq("品牌比對不分大小寫", applyBrand("jopt 2026 Osaka", "JOPT"), "jopt 2
 eq("來源沒設 brand → 原封不動", applyBrand("Manila Super Series 24", undefined), "Manila Super Series 24");
 eq("品牌只是別的字的一部分 → 還是要補",
   applyBrand("Joptimism Cup", "JOPT"), "JOPT Joptimism Cup");
+
+eq("WPT 的分類前綴要拿掉", stripCategoryPrefix("Special Event: WPT Seoul"), "WPT Seoul");
+eq("Main Tour: 也是分類", stripCategoryPrefix("Main Tour: WPT Cambodia Championship"), "WPT Cambodia Championship");
+eq("沒有冒號的 Prime 是名稱的一部分，不動", stripCategoryPrefix("WPT Prime Australia Championship"), "WPT Prime Australia Championship");
+eq("一般名稱不動", stripCategoryPrefix("Poker Dream 26"), "Poker Dream 26");
 
 console.log("\n【12】賽期天數（過長的要在預覽標記提醒）");
 eq("同一天 = 1 天", festivalDays({ "Start Date": "2026-10-01", "End Date": "2026-10-01" }), 1);
@@ -305,6 +342,32 @@ eq("null → 留白", pickBuyIn({ me_buyin: null, currency: "TWD", buyin_evidenc
 eq("0 → 留白", pickBuyIn({ me_buyin: 0, currency: "TWD", buyin_evidence: "x" }), B);
 eq("幣別不是三碼 → 留白", pickBuyIn({ me_buyin: 5000, currency: "NT$", buyin_evidence: "buy-in" }), B);
 eq("有金額沒幣別 → 留白（換算不了就別寫）", pickBuyIn({ me_buyin: 5000, currency: "", buyin_evidence: "buy-in" }), B);
+
+// 澳洲的「$5,000」是澳幣：AI 說 USD 但原文沒寫 USD → 改 AUD；原文明寫 USD 就尊重
+const auEv = { me_buyin: 5000, currency: "USD", buyin_evidence: "Buy-In: $5,000" };
+eq("澳洲 + USD + 原文只有 $ → AUD", pickBuyIn(auEv, "Sydney, Australia").Currency, "AUD");
+eq("澳洲雙語地點也認得", pickBuyIn(auEv, "澳洲 雪梨\nSydney, Australia").Currency, "AUD");
+eq("原文明寫 USD → 不改", pickBuyIn({ ...auEv, buyin_evidence: "Buy-In: USD 5,000" }, "Sydney, Australia").Currency, "USD");
+eq("不是澳洲 → 不改", pickBuyIn(auEv, "Phnom Penh, Cambodia").Currency, "USD");
+eq("沒給地點 → 不改", pickBuyIn(auEv).Currency, "USD");
+
+console.log("\n【18b】詳情頁答的買入是不是同一場（RPT 首頁列 Championship IV，問的是 Grand Final）");
+eq("屆次記號：數字、羅馬數字、#、Q、S、季節、Grand Final／Warm-up", [...editionTokens("RPT Championship IV")], ["4"]);
+eq("Grand Final 是一個記號", [...editionTokens("RPT Championship Grand Final")], ["grandfinal"]);
+eq("Poker Dream 26 → 26（年份不算）", [...editionTokens("Poker Dream 26 Malaysia 2026")], ["26"]);
+eq("JOPT 2026 Tokyo #03 → 3", [...editionTokens("JOPT 2026 Tokyo #03")], ["3"]);
+eq("Q3、S5、Warm-up、Winter", [...editionTokens("USOP Osaka Q3 / WWP S5 / Megastack Warm-up / Quads Winter")].sort(), ["q3", "s5", "warmup", "winter"].sort());
+eq("單獨的 x 不是羅馬數字", [...editionTokens("USOP x JAPAN GOLD DRAGON")], []);
+ok("Grand Final vs IV → 衝突", editionConflict("RPT Championship Grand Final", "RPT Championship IV"));
+ok("26 vs 26 → 不衝突", !editionConflict("Poker Dream 26", "POKER DREAM 26 MALAYSIA"));
+ok("Warm-up vs 25 → 衝突", editionConflict("Manila Megastack Warm-up", "Manila Megastack 25"));
+ok("一邊沒有記號 → 不衝突（USOP Osaka Q3 vs USOP Dojima Osaka）", !editionConflict("USOP Grand Championship Osaka Q3 2026", "USOP Dojima, Osaka 2026"));
+ok("羅馬數字 IV vs 阿拉伯 4 → 同一屆", !editionConflict("ZSOP Taipei IV", "ZSOP Taipei 4"));
+ok("acceptSeries：AI 說不是同一場 → 拒收", !acceptSeries("RPT Championship Grand Final", { same_series: false, series_name: "RPT Championship Grand Final" }));
+ok("acceptSeries：AI 沒說但屆次對不上 → 拒收", !acceptSeries("RPT Championship Grand Final", { series_name: "RPT Championship IV" }));
+ok("acceptSeries：AI 說是、屆次也對 → 收", acceptSeries("Poker Dream 26", { same_series: true, series_name: "POKER DREAM 26 MALAYSIA" }));
+ok("acceptSeries：沒有 series_name 也沒說不是 → 收（舊格式）", acceptSeries("KPC Poker Series October 2026", { me_buyin: 1300000 }));
+ok("acceptSeries：活動節名 vs 品牌主賽名（Jeju Poker Festival vs Red Dragon Classic Main Event）→ 收", acceptSeries("Jeju Poker Festival 2026", { same_series: true, series_name: "Red Dragon Classic Main Event" }));
 
 console.log("\n【19】系列官網後備連結（不依賴彙整站提供連結）");
 const srcJson = JSON.parse(await readFile(new URL("./sources.json", import.meta.url), "utf8"));

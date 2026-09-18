@@ -513,10 +513,17 @@ const DETAIL_SCHEMA = {
     me_buyin: { type: "NUMBER", nullable: true },
     currency: { type: "STRING" },
     buyin_evidence: { type: "STRING", description: "頁面上寫這個買入金額的那句原文，有填 me_buyin 就一定要填" },
+    series_name: { type: "STRING", description: "這個買入所屬的賽事系列在頁面上的名稱（含屆次／場次字樣）" },
+    same_series: { type: "BOOLEAN", nullable: true, description: "這個買入是不是就是問的那一場（同系列不同屆也算不是）" },
     handbook_url: { type: "STRING" },
   },
   required: [],
 };
+
+// 詳情頁和 PDF 共用的「別答錯場」規則
+const SAME_SERIES_RULES = (name) => `- 頁面上可能列著同一個系列的另一場（例如問的是「${name}」，頁面是它的上一屆或下一屆、Warm-up、
+  或整個活動節裡另一個品牌的賽事）。series_name 填「這個買入所屬的系列在頁面上的名稱」（含屆次／場次字樣），
+  same_series 填它是不是就是「${name}」這一場——同系列但不同屆／不同場次就是 false，而且 me_buyin 要填 null，不要拿別場的充數。`;
 
 function listingPrompt(items, today) {
   const multi = items.length > 1;
@@ -616,6 +623,7 @@ function detailPrompt(name, text) {
 - currency 用 ISO 代碼（TWD、JPY、KRW、USD、PHP、VND、MYR、HKD、SGD、THB、MOP、CNY、AUD、INR、EUR 等），找不到填空字串。
 - 有填 me_buyin 就**一定要**在 buyin_evidence 填「頁面上寫這個金額的那句原文」。
   原文裡是「保證獎金」「GTD」「Prize Pool」這類字的話那不是買入，me_buyin 要填 null。
+${SAME_SERIES_RULES(name)}
 - handbook_url 填「這個系列自己的頁面」網址（從 [link:...] 取，例如 /series/xxx-2026）。找不到就填空字串，不要拿首頁充數。
 
 頁面內容：
@@ -632,7 +640,10 @@ function pdfPrompt(name, fileName) {
 - 賽程表常把買入拆成「賽事費＋行政費」，例如 1,300,000 (1,170,000 + 130,000)：取合計的那個數字（1300000）。
 - 一份 PDF 可能涵蓋好幾個系列、好幾個品牌的 Main Event。只取屬於「${name}」這個系列的主賽事：
   名稱裡有這個系列的品牌字樣的優先；Mini Main Event、High Roller、衛星賽（Satellite）、Day 2／Final Day 那些列都不算。
-  真的分不出哪一個屬於這個系列就輸出 null，不要猜。
+  如果「${name}」是整個活動節的名稱（沒有品牌字樣，例如 Jeju Poker Festival），而 PDF 裡有好幾個品牌各自的
+  Main Event，就取名稱含 Main Event（不含 Mini）、保證獎金最大的那一個——那就是這個活動節的主賽。
+  真的分不出來就輸出 null，不要猜。
+${SAME_SERIES_RULES(name)}
 - me_buyin 只輸出數字；找不到就輸出 null。
 - currency 用 ISO 代碼（TWD、JPY、KRW、USD、PHP、VND、MYR、HKD、SGD、THB、MOP、CNY、AUD、EUR 等），找不到填空字串。
   表格標題常寫「BUY-IN (KRW)」這種，幣別就從那裡取。
@@ -762,6 +773,14 @@ async function annotateCancelled(client, tab, headers, changes) {
   return changes.length;
 }
 
+// 照表上原本的寫法（2026/09/25 或 2026-09-25）寫回去，不要同一列一格斜線一格橫線
+export function formatLikeSheet(ymd, sample) {
+  const m = String(ymd ?? "").trim().match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (!m) return ymd;
+  const sep = /^\d{4}\//.test(String(sample ?? "").trim()) ? "/" : "-";
+  return `${m[1]}${sep}${m[2].padStart(2, "0")}${sep}${m[3].padStart(2, "0")}`;
+}
+
 async function updateDateCells(client, tab, headers, changes) {
   const si = headers.indexOf("Start Date");
   const ei = headers.indexOf("End Date");
@@ -769,11 +788,11 @@ async function updateDateCells(client, tab, headers, changes) {
   for (const c of changes) {
     data.push({
       range: `${tab}!${colLetter(si)}${c.row}`,
-      values: [[c.newStart]],
+      values: [[formatLikeSheet(c.newStart, c.oldStart)]],
     });
     data.push({
       range: `${tab}!${colLetter(ei)}${c.row}`,
-      values: [[c.newEnd]],
+      values: [[formatLikeSheet(c.newEnd, c.oldEnd)]],
     });
   }
   await client.request({
@@ -920,10 +939,10 @@ const MAX_BUYIN_USD = 300_000;
 const BUYIN_WORDS = /buy.?in|entry\s*fee|entry|買入|報名費|參賽費|バイイン|바이인/i;
 const GTD_WORDS = /\bgtd\b|guarante|保證|保底|獎池|獎金|prize\s*pool|総額|賞金|게런티|보장|프라이즈/i;
 
-export function pickBuyIn(ev) {
+export function pickBuyIn(ev, location = "") {
   const blank = { "ME Buy-in": "", Currency: "" };
   const n = Number(ev?.me_buyin);
-  const ccy = String(ev?.currency ?? "").trim().toUpperCase();
+  let ccy = String(ev?.currency ?? "").trim().toUpperCase();
   if (!Number.isFinite(n) || n <= 0 || !/^[A-Z]{3}$/.test(ccy)) return blank;
 
   const rate = ROUGH_USD_RATE[ccy];
@@ -934,6 +953,9 @@ export function pickBuyIn(ev) {
   if (!evidence) return blank;
   if (GTD_WORDS.test(evidence) && !BUYIN_WORDS.test(evidence)) return blank;
 
+  // 澳洲場館的「$5,000」是澳幣，AI 常直接當美金（2026-09-19 試跑：同一個 WPT 站一筆 AUD 一筆 USD）。
+  // 原文沒明寫 USD／US$ 就改成 AUD。
+  if (ccy === "USD" && countryOf(location) === "australia" && !/\bUSD\b|US\$/i.test(evidence)) ccy = "AUD";
   return { "ME Buy-in": String(n), Currency: ccy };
 }
 
@@ -962,6 +984,76 @@ export function applyBrand(name, brand) {
   if (!brand || !n) return n;
   const has = new RegExp(`(^|[^a-z0-9])${brand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i");
   return has.test(n) ? n : `${brand} ${n}`;
+}
+
+// WPT 官網把賽事分類寫在名稱前面（「Special Event: WPT Seoul」）。分類不是名稱的一部分，
+// 留著會害分組認不出它跟表上的「WPT Seoul 2026」是同一場（2026-09-19 試跑差點多寫一列）。
+export function stripCategoryPrefix(name) {
+  return String(name ?? "")
+    .replace(/^\s*(special events?|main tour|featured|upcoming|live)\s*[:：]\s*/i, "")
+    .trim();
+}
+
+// LLM 分組說「表上沒有」之後的最後一道保守防線：名稱幾乎一樣（去掉年份和虛詞後，短的那個整段出現在長的裡面）
+// 而且日期重疊，就當成同一場。「WPT Seoul」⊂「WPT Seoul 2026」是；「Manila Megastack 25」vs「Manila Megastack Warm-up」不是。
+// 短的那個至少要兩個字，只有一個字（「APPT」）太容易誤判。
+const NAME_STOPWORDS = new Set(["the", "of", "and", "event", "events", "special", "live", "by", "presented"]);
+export function isSameEventStrict(ev, ex) {
+  const s1 = parseYMD(ev["Start Date"]);
+  const e1 = parseYMD(ev["End Date"]) ?? s1;
+  const s2 = parseYMD(ex["Start Date"]);
+  const e2 = parseYMD(ex["End Date"]) ?? s2;
+  if (s1 == null || s2 == null || !rangesOverlap(s1, e1, s2, e2)) return false;
+  const toks = (n) => normName(n).split(" ").filter((t) => t && !NAME_STOPWORDS.has(t));
+  const a = toks(ev.Tournament);
+  const b = toks(ex.Tournament);
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  if (short.length < 2) return false;
+  return ` ${long.join(" ")} `.includes(` ${short.join(" ")} `);
+}
+
+// 詳情頁／PDF 答回來的買入，可能屬於同系列的另一場（RPT 首頁列的是 Championship IV，問的是 Grand Final，
+// 2026-09-19 試跑就答了 IV 的 27.5M）。除了叫 AI 自己判斷 same_series，程式再比一次「屆次記號」：
+// 數字、羅馬數字、序數、#03、Q3、S5、季節、Grand Final／Final／Warm-up／Mini。兩邊都有記號但對不上就不收。
+const ROMAN = { i: 1, v: 5, x: 10 };
+function romanToInt(s) {
+  let total = 0;
+  for (let i = 0; i < s.length; i++) {
+    const cur = ROMAN[s[i]];
+    const next = ROMAN[s[i + 1]] ?? 0;
+    total += cur < next ? -cur : cur;
+  }
+  return total;
+}
+export function editionTokens(name) {
+  const out = new Set();
+  const text = String(name ?? "")
+    .toLowerCase()
+    .replace(/grand\s+final/g, " grandfinal ")
+    .replace(/warm[\s-]*up/g, " warmup ");
+  for (const raw of text.split(/[^a-z0-9#]+/)) {
+    if (!raw) continue;
+    let m;
+    if (/^20\d\d$/.test(raw)) continue; // 年份不是屆次
+    if ((m = raw.match(/^#?0*(\d{1,3})(?:st|nd|rd|th)?$/))) out.add(m[1]);
+    else if ((m = raw.match(/^[sq](\d{1,2})$/))) out.add(raw[0] + m[1]);
+    // 單獨一個 i／x 太常是別的意思（「USOP x JAPAN」的 x），只認兩個字母以上的羅馬數字和單獨的 v
+    else if (/^[ivx]{2,6}$/.test(raw) || raw === "v") out.add(String(romanToInt(raw)));
+    else if (/^(grandfinal|final|warmup|mini|spring|summer|autumn|fall|winter)$/.test(raw)) out.add(raw === "fall" ? "autumn" : raw);
+  }
+  return out;
+}
+export function editionConflict(a, b) {
+  const ta = editionTokens(a);
+  const tb = editionTokens(b);
+  if (!ta.size || !tb.size) return false;
+  for (const t of ta) if (tb.has(t)) return false;
+  return true;
+}
+// d 是詳情頁／PDF 的回答；只有 AI 明說「不是同一場」或屆次對不上時才拒收
+export function acceptSeries(name, d) {
+  if (d?.same_series === false) return false;
+  return !editionConflict(name, d?.series_name);
 }
 
 // 抓不到該場賽事的專屬連結時，用 sources.json 的 seriesLinks 補上主辦系列的官網。
@@ -1155,6 +1247,7 @@ export function mergeGroup(group, candidates) {
   out._bestTier = rows[0]._tier;
   out._linkTier = linkDonor ? linkDonor._tier : Infinity;
   out._linkHost = linkDonor ? String(linkDonor._srcHost ?? "") : "";
+  out._noDateUpdate = rows[0]._noDateUpdate === true;
   return out;
 }
 
@@ -1342,7 +1435,11 @@ async function huntBuyIn(target, ctx) {
     // 專屬頁面連結只接受同一個網站的（避免被導到別的地方），而且要是還沒看過的
     const hb = cleanLink(d?.handbook_url, ctx.blacklist);
     if (!deeper && hb && sameDomain(hb, url) && !tried.has(normalizeLink(hb))) deeper = hb;
-    const got = pickBuyIn(d);
+    const got = pickBuyIn(d, target.location);
+    if (got["ME Buy-in"] && !acceptSeries(target.name, d)) {
+      notes.push(`頁面上的買入屬於別場（${String(d?.series_name ?? "").slice(0, 40) || "AI 判定不是同一場"}）`);
+      return none;
+    }
     if (!got["ME Buy-in"]) notes.push("官網頁面沒列主賽買入");
     return got;
   };
@@ -1362,7 +1459,11 @@ async function huntBuyIn(target, ctx) {
       mimeType: "application/pdf",
       data: buf.toString("base64"),
     });
-    const got = pickBuyIn(d);
+    const got = pickBuyIn(d, target.location);
+    if (got["ME Buy-in"] && !acceptSeries(target.name, d)) {
+      notes.push(`賽程 PDF ${fileName} 裡的買入屬於別場（${String(d?.series_name ?? "").slice(0, 40) || "AI 判定不是同一場"}）`);
+      return none;
+    }
     if (got["ME Buy-in"]) console.log(`  📄 ${target.name}｜買入來自賽程 PDF ${fileName}`);
     else notes.push(`賽程 PDF ${fileName} 裡也沒找到主賽買入`);
     return got;
@@ -1509,6 +1610,7 @@ export function detectLinkFixes(existing, linkFixes) {
 export function detectDateChange(merged, sheetRow) {
   if (!sheetRow) return null;
   if (merged._bestTier > 2) return null; // 只信主辦方與場館方，彙整站的日期不拿來改人工資料
+  if (merged._noDateUpdate) return null; // 來源列的只是主賽日期（WPT），不能拿來縮短整檔賽事節
   const changes = {};
   for (const [f, key] of [["Start Date", "newStart"], ["End Date", "newEnd"]]) {
     const oldTs = parseYMD(sheetRow[f]);
@@ -1577,14 +1679,14 @@ async function main() {
       if (t.kept >= MAX_NEW_PER_SOURCE) continue; // 單一來源上限，防 LLM 幻覺灌爆表格
       // 先補品牌再拿去比對系列連結——JOPT 的原始名稱是「2026 Sapporo #02」，
       // 補成「JOPT 2026 Sapporo #02」之後才對得到 japanopenpoker.com
-      const name = applyBrand(ev.tournament, src.brand);
+      const name = applyBrand(stripCategoryPrefix(ev.tournament), src.brand);
       const row = {
         "Start Date": String(ev.start_date ?? "").trim(),
         "End Date": String(ev.end_date ?? "").trim() || String(ev.start_date ?? "").trim(),
         // 有些主辦站每場賽事不重複寫城市（都在同一個場館），AI 不一定會從上下文推；來源可以設預設地點
         "Location": String(ev.location ?? "").trim() || String(src.location ?? "").trim(),
         "Tournament": name,
-        ...pickBuyIn(ev),
+        ...pickBuyIn(ev, String(ev.location ?? "").trim() || String(src.location ?? "")),
         // 優先用該場賽事的專屬連結；沒有就退回主辦系列官網；再沒有才留空
         "Handbook URL":
           cleanLink(ev.detail_url, blacklist) ||
@@ -1592,6 +1694,9 @@ async function main() {
         _tier: src.tier,
         _src: src.name.split(" ")[0],
         _srcHost: hostOf(src.url), // 連結升級時用來確認專屬頁真的在這個來源的網站上
+        // WPT 官網列的是主賽事日期，不是整檔賽事節（WPT Seoul 表上 10/30–11/09，官網 11/05–09）：
+        // 這種來源的日期只拿來新增列，不拿來改表上既有的日期
+        _noDateUpdate: src.noDateUpdate === true,
         _cancelled: ev.cancelled === true,
       };
       const bad = validateEvent(row, todayTs);
@@ -1715,14 +1820,21 @@ async function main() {
       }
       continue;
     }
-    if (exists) {
+    // LLM 說表上沒有、但名稱幾乎一樣又日期重疊 → 保守當同一場（2026-09-19 試跑：「Special Event: WPT Seoul」
+    // 差點跟表上的「WPT Seoul 2026」變成兩列）。這條路只補空欄位、不動日期——名稱包含關係也可能是活動節 vs 它的主賽。
+    const strictRow = !exists && g.alreadyInSheet !== null ? (existing.find((r) => isSameEventStrict(row, r)) ?? null) : null;
+    if (strictRow) {
+      console.log(`  🔒 「${row.Tournament}」跟第 ${strictRow._row} 列「${strictRow.Tournament}」名稱和日期都重疊，當同一場（不新增）`);
+    }
+    if (exists || strictRow) {
       skippedExisting++;
+      const target = exists ? sheetRow : strictRow;
       // 同樣的道理：LLM 沒真的判過（走保守退路）就沒有可靠的對應列，不要去改表格
-      if (g.alreadyInSheet !== null) {
-        const chg = detectDateChange(row, sheetRow);
+      if (g.alreadyInSheet !== null && target) {
+        const chg = exists ? detectDateChange(row, target) : null;
         if (chg && !dateChanges.some((c) => c.row === chg.row)) dateChanges.push(chg);
         // 賽程表和報名費是後來才公布的，每輪都回頭補一次空欄位
-        for (const f of detectBlankFills(row, sheetRow, genericLinks)) {
+        for (const f of detectBlankFills(row, target, genericLinks)) {
           const i = blankFills.findIndex((x) => x.row === f.row && x.col === f.col);
           if (i < 0) blankFills.push(f);
           // 同一格已經排了「更正錯連結」（換成另一個泛用連結）時，主辦方給的專屬頁更好，用專屬頁蓋掉
@@ -1855,6 +1967,7 @@ async function main() {
     delete ev._bestTier;
     delete ev._linkTier;
     delete ev._linkHost;
+    delete ev._noDateUpdate;
     if (headers.includes("Source")) ev["Source"] = "AI";
   }
 
