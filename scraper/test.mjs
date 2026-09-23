@@ -187,6 +187,13 @@ const txt = htmlToText(html, "https://playreddragon.com/series-schedule.html");
 ok("賽事名從 alt 取出來了", txt.includes("[img:Jeju Poker Festival 2026]"), txt);
 ok("相對連結轉成絕對網址", txt.includes("[link:https://playreddragon.com/RDPT/jeju-2026.html]"), txt);
 ok("HTML 註解裡的舊內容被移除", !txt.includes("註解掉的舊賽事"), txt);
+// Quads 官網（Next.js）的真實寫法：十六進位編碼的連接號。以前原封不動送給 AI，裡面的「2013」像年份
+const quadsTxt = htmlToText(`<p>QPC Circuit 2026</p><span>12 &#x2013; 21 Oct 2026</span>`, "https://quadspoker.vn/series");
+eq("十六進位編碼還原（&#x2013; → –）", quadsTxt, "QPC Circuit 2026 12 – 21 Oct 2026");
+ok("還原後不會殘留「2013」", !quadsTxt.includes("2013"));
+eq("十進位、名稱編碼也還原", htmlToText(`<b>A &#8211; B &amp; C&#39;s &ndash; &quot;D&quot; &#x111;</b>`, "https://x.example/"), `A – B & C's – "D" đ`);
+eq("&amp; 最後才還原，不會被解兩次", htmlToText(`<i>&amp;#x2013;</i>`, "https://x.example/"), "&#x2013;");
+eq("控制字元當空白、不認得的名稱保留", htmlToText(`<i>a&#1;b &foo; c</i>`, "https://x.example/"), "a b &foo; c");
 
 console.log("\n【9】保守去重（LLM 失敗時的退路：寧可漏不要錯）");
 const sheet = [{ Tournament: "HPC", "Start Date": "2026-09-30", "End Date": "2026-10-04" }];

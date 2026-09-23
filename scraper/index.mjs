@@ -426,13 +426,27 @@ export function htmlToText(html, baseUrl) {
       return ` [link:${abs}] `;
     })
     .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&#8211;|&#8212;/g, "-")
-    .replace(/&#\d+;/g, " ")
+    .replace(/&[a-z]+;|&#x?[0-9a-f]+;/gi, decodeEntity)
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, PAGE_TEXT_LIMIT);
+}
+
+// HTML 字元編碼還原。以前只認十進位的 &#8211;，十六進位的 &#x2013; 原封不動送給 AI——
+// Next.js 做的站（Quads、Grand Loyal、RPT、Poker Dream）都用十六進位，AI 看到的是
+// 「QPC Circuit 2026 12 &#x2013; 21 Oct 2026」，裡面的 2013 很容易被當成年份（2026-09-24 查 QPC Circuit 時抓到的）
+const NAMED_ENTITIES = {
+  nbsp: " ", amp: "&", quot: '"', apos: "'", lt: "<", gt: ">",
+  ndash: "–", mdash: "—", hellip: "…", rsquo: "’", lsquo: "‘", rdquo: "”", ldquo: "“",
+};
+function decodeEntity(ent) {
+  const body = ent.slice(1, -1).toLowerCase();
+  if (body.startsWith("#")) {
+    const code = body[1] === "x" ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
+    // 控制字元、無效碼位都當空白，不要把怪字元塞給 AI
+    return Number.isFinite(code) && code >= 32 && code <= 0x10ffff ? String.fromCodePoint(code) : " ";
+  }
+  return NAMED_ENTITIES[body] ?? ent; // 不認得的名稱保留原樣
 }
 
 // ---------- Gemini ----------
