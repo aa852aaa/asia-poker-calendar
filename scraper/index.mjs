@@ -1425,7 +1425,9 @@ export function sameLinkRow(ev, sheetRows, genericLinks) {
 }
 
 // 把 LLM 給的 matched_sheet_row 對回實際那一列
-export function findSheetRow(name, sheetRows) {
+// ev（可選）= 這一場的候選資料：名稱對到好幾列時（Wei 每屆都只寫「APC」），用日期挑出對得上的那一列。
+// 挑不出唯一一列就照舊回 null——寧可不改也不要改錯列。
+export function findSheetRow(name, sheetRows, ev = null) {
   // 名稱是空的或太短就不要猜——空字串會去比對到表格裡的空白列，然後把註記寫進那一列。
   // （2026-09-09 真的發生過：LLM 分組失敗導致 matched 是空字串，結果第 16 列被寫進「[已取消]」）
   const target = String(name ?? "").trim();
@@ -1433,17 +1435,23 @@ export function findSheetRow(name, sheetRows) {
 
   // 表格裡的空白列同樣不能當成比對對象
   const rows = sheetRows.filter((r) => String(r.Tournament ?? "").trim().length >= 3);
+  const byDate = (list) => {
+    if (!ev) return null;
+    const dated = list.filter((r) => datesPlausiblySame(ev, r));
+    return dated.length === 1 ? dated[0] : null;
+  };
 
   const exact = rows.filter((r) => r.Tournament.trim() === target);
   if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return byDate(exact);
 
   const scored = rows
     .map((r) => ({ r, s: jaccard(r.Tournament, target) }))
     .filter((x) => x.s >= 0.5)
     .sort((a, b) => b.s - a.s);
-  return scored.length === 1 || (scored.length > 1 && scored[0].s > scored[1].s + 0.2)
-    ? scored[0].r
-    : null;
+  if (scored.length === 1 || (scored.length > 1 && scored[0].s > scored[1].s + 0.2)) return scored[0].r;
+  // 分數太接近分不出來：只在跟最高分差不多的那幾列裡用日期挑
+  return scored.length ? byDate(scored.filter((x) => x.s >= scored[0].s - 0.2).map((x) => x.r)) : null;
 }
 
 // 賽事的資訊是分批公布的：先出大概日期，兩三個月前才出賽程表和報名費。
@@ -1990,7 +1998,7 @@ async function main() {
     // alreadyInSheet === null 代表 LLM 沒判（漏了或整個失敗）→ 用保守判定
     let exists =
       g.alreadyInSheet === null ? isDuplicateConservative(row, existing) : g.alreadyInSheet;
-    let sheetRow = exists ? findSheetRow(g.matched, existing) : null;
+    let sheetRow = exists ? findSheetRow(g.matched, existing, row) : null;
     // AI 對到的那一列日期差太多 → 不是同一場，當成新的（見 datesPlausiblySame）。
     // 取消註記也靠這個對應列，對錯列就會把別場標成取消，所以這道檢查要在前面
     if (sheetRow && g.alreadyInSheet === true && !datesPlausiblySame(row, sheetRow)) {
@@ -2026,13 +2034,14 @@ async function main() {
     }
     // LLM 說表上沒有、但名稱幾乎一樣又日期重疊 → 保守當同一場（2026-09-19 試跑：「Special Event: WPT Seoul」
     // 差點跟表上的「WPT Seoul 2026」變成兩列）。這條路只補空欄位、不動日期——名稱包含關係也可能是活動節 vs 它的主賽。
-    // 主辦方／場館方的賽事被判成「表上已有」、但名字跟對到的那列不太像時，印出來方便查
+    // 主辦方／場館方的賽事被判成「表上已有」時，印出對到哪一列（含日期），方便查
     // （QPC Circuit 就是這樣悄悄消失好幾輪，log 裡什麼都看不出來）
     if (exists && g.alreadyInSheet === true && row._bestTier <= 2) {
+      const cand = `「${row.Tournament}」${row["Start Date"]}~${row["End Date"]}`;
       if (!sheetRow) {
-        console.log(`  ↳ 「${row.Tournament}」AI 說表上已有（對到「${g.matched}」），但找不到是哪一列，這輪不新增`);
-      } else if (jaccard(row.Tournament, sheetRow.Tournament) < 0.5) {
-        console.log(`  ↳ 「${row.Tournament}」→ 第 ${sheetRow._row} 列「${sheetRow.Tournament}」`);
+        console.log(`  ↳ ${cand} AI 說表上已有（對到「${g.matched}」），但找不到是哪一列，這輪不新增`);
+      } else {
+        console.log(`  ↳ ${cand} → 第 ${sheetRow._row} 列「${sheetRow.Tournament}」${sheetRow["Start Date"]}~${sheetRow["End Date"]}`);
       }
     }
     // AI 說表上沒有的，再用確定性的規則檢查一次：官網專屬連結一樣（sameLinkRow），或名稱幾乎一樣且日期重疊（isSameEventStrict）

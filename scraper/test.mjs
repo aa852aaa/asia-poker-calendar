@@ -307,6 +307,16 @@ eq("名稱太短 → null（寧可不改）", findSheetRow("AP", sheetRows), nul
 eq("完全相同 → 對到那一列", findSheetRow("APT JEJU 2026", sheetRows)?._row, 2);
 eq("名稱相近 → 對得到", findSheetRow("GOP Incheon 2026", sheetRows)?._row, 20);
 eq("完全對不上 → null", findSheetRow("Some Unrelated Series 2026", sheetRows), null);
+// Wei 每屆都只寫「APC」：名稱對到好幾列時用日期挑（2026-09-24 試跑：「APC」對不回任何一列，APC 的連結和買入一直補不上）
+const apcRows = [
+  { _row: 30, Tournament: "APC", "Start Date": "2025/12/03", "End Date": "2025/12/14" },
+  { _row: 74, Tournament: "APC", "Start Date": "2026/12/02", "End Date": "2026/12/13" },
+];
+const apcCand = { Tournament: "Asia Poker Championship: Taipei IV 2026", "Start Date": "2026-12-02", "End Date": "2026-12-13" };
+eq("同名好幾列 + 給了日期 → 挑日期對得上的那列", findSheetRow("APC", apcRows, apcCand)?._row, 74);
+eq("同名好幾列、沒給日期 → 照舊不猜", findSheetRow("APC", apcRows), null);
+eq("同名好幾列、日期都對不上 → 不猜", findSheetRow("APC", apcRows, { "Start Date": "2026-06-01", "End Date": "2026-06-10" }), null);
+eq("只有一列同名 → 不看日期，照舊對到", findSheetRow("APT JEJU 2026", sheetRows, apcCand)?._row, 2);
 
 console.log("\n【17】地點寫成 Wei 手填的雙語格式");
 // 對照組（實際從網站抓下來的既有列）：
