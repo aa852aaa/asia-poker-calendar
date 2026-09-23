@@ -10,7 +10,7 @@ import {
   formatLocation, pickBuyIn, seriesLink, detectBlankFills, detailTargets, isTransientSheetsError,
   detectLinkFixes, needsBrowser, buildTodoList, normalizeLink, isGenericLink, sameDomain, hostOf,
   findPdfLinks, isPdfUrl, stripCategoryPrefix, isSameEventStrict, editionTokens, editionConflict, acceptSeries,
-  formatLikeSheet, amountsIn, chooseMainEvent, pdfTextUsable,
+  formatLikeSheet, amountsIn, chooseMainEvent, pdfTextUsable, datesPlausiblySame, linkLooksRecurring,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -740,6 +740,30 @@ eq("沒有保證獎金可比 → 買入最大的", chooseMainEvent("Poker Dream 
 ])?.buyin, 4800);
 eq("買入是空的那筆不算", chooseMainEvent("KPC", [{ name: "KPC MAIN EVENT", buyin: null, currency: "KRW" }]), null);
 eq("清單是空的／不是陣列 → null", [chooseMainEvent("KPC", []), chooseMainEvent("KPC", undefined), chooseMainEvent("KPC", "x")], [null, null, null]);
+
+console.log("\n【28】AI 對到的表上那一列，日期要對得上（2026-09-21：QPC Circuit 被當成 Quads Winter，一直沒新增）");
+const quadsWinter = { _row: 97, Tournament: "Quads Poker Championship Winter 2026", "Start Date": "2026/12/12", "End Date": "2026/12/23" };
+ok("QPC Circuit（10/12–21）vs Quads Winter（12/12–23）→ 不是同一場",
+  !datesPlausiblySame({ "Start Date": "2026-10-12", "End Date": "2026-10-21" }, quadsWinter));
+ok("改期一天（APT Championship 11/13 → 11/12）→ 同一場",
+  datesPlausiblySame({ "Start Date": "2026-11-12", "End Date": "2026-11-29" }, { "Start Date": "2026/11/13", "End Date": "2026/11/29" }));
+ok("官網只列主賽日期（WPT Seoul 11/05–09 vs 表上 10/30–11/09）→ 同一場",
+  datesPlausiblySame({ "Start Date": "2026-11-05", "End Date": "2026-11-09" }, { "Start Date": "2026/10/30", "End Date": "2026/11/09" }));
+ok("改期一個月內（40 天）→ 還算同一場",
+  datesPlausiblySame({ "Start Date": "2026-11-20", "End Date": "2026-11-30" }, { "Start Date": "2026/10/01", "End Date": "2026/10/11" }));
+ok("日期壞掉 → 不擋，照 AI 的判斷", datesPlausiblySame({ "Start Date": "TBA" }, quadsWinter));
+
+console.log("\n【29】例行賽程被 AI 改名時，回頭看頁面上那個連結寫什麼（2026-09-21：Grand Loyal 的每週賽程被寫進表格）");
+// Grand Loyal 首頁的真實結構：名稱在連結前面一次、後面（圖片說明＋文字）又一次
+const glpcHome = "Hotline - 0869 583 586 en [img:DAILY SCHEDULE 21.9.2026 --- 27.9.2026] FEATURED SERIES DAILY SCHEDULE 21.9.2026 --- 27.9.2026 21/09/2026 - 27/09/2026 [link:https://grandloyal.vn/series/117] View Player Guide [link:https://grandloyal.vn/series/117] View Schedule SCHEDULE [link:https://grandloyal.vn/series] Browse all Series → Ongoing and upcoming series at Grand Loyal [link:https://grandloyal.vn/series/117] [img:DAILY SCHEDULE 21.9.2026 --- 27.9.2026] ♠ 21/09/2026 - 27/09/2026 DAILY SCHEDULE 21.9.2026 --- 27.9.2026 View series details →";
+ok("Grand Loyal 每週賽程的連結 → 例行賽程", linkLooksRecurring("https://grandloyal.vn/series/117", glpcHome));
+ok("網址差 www／結尾斜線也認得", linkLooksRecurring("https://www.grandloyal.vn/series/117/", glpcHome));
+// Quads 的真實結構：週賽排在 QPC Circuit 前面——只看連結後面，才不會把 QPC Circuit 誤判成週賽
+const quadsPage = "Series [link:https://quadspoker.vn/series/41] [img:Quads Weekly 21/09-27/09/2026] On Going Quads Weekly 21/09-27/09/2026 Every day [link:https://quadspoker.vn/series/38] [img:QPC Circuit 2026] Upcoming QPC Circuit 2026 12 – 21 Oct 2026 [link:https://quadspoker.vn/series/35] [img:QPC Autumn 2026] Completed QPC Autumn 2026";
+ok("Quads 週賽的連結 → 例行賽程", linkLooksRecurring("https://quadspoker.vn/series/41", quadsPage));
+ok("QPC Circuit（前面緊接著週賽）→ 不是例行賽程", !linkLooksRecurring("https://quadspoker.vn/series/38", quadsPage));
+ok("頁面上沒有這個連結 → 不擋", !linkLooksRecurring("https://quadspoker.vn/series/99", quadsPage));
+ok("沒有連結或沒有頁面文字 → 不擋", !linkLooksRecurring("", quadsPage) && !linkLooksRecurring("https://grandloyal.vn/series/117", ""));
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);

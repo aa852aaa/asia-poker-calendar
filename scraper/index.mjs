@@ -916,6 +916,23 @@ async function updateDateCells(client, tab, headers, changes) {
 // 列在 series 區，AI 照抄進來寫進了表格。
 const RECURRING_NAME = /\bdaily\b|\bweekly\b|daily schedule|每日|每週|週賽/i;
 
+// AI 會把例行賽程改名，躲過上面的名稱檢查（2026-09-21 排程：Grand Loyal 首頁的「DAILY SCHEDULE 21.9.2026 --- 27.9.2026」
+// 被抽成「Grand Loyal Poker Championship Series」寫進表格）。所以回來源頁面再看一次：這筆的 detail_url 在頁面上
+// 出現的地方，連結後面到下一個連結之間寫的是什麼。只看連結「後面」——列表常是
+// 「上一場的說明 [link:下一場] 下一場的名稱」，往前看會誤判到隔壁那場（Quads 頁面上週賽就排在 QPC Circuit 前面）。
+export function linkLooksRecurring(url, pageText) {
+  const want = normalizeLink(url);
+  if (!want || !pageText) return false;
+  const re = /\[link:([^\]]+)\]/g;
+  let m;
+  while ((m = re.exec(pageText))) {
+    if (normalizeLink(m[1]) !== want) continue;
+    const window = pageText.slice(re.lastIndex, re.lastIndex + 160).split("[link:")[0];
+    if (RECURRING_NAME.test(window)) return true;
+  }
+  return false;
+}
+
 export function validateEvent(ev, todayTs) {
   const s = parseYMD(ev["Start Date"]);
   const e = parseYMD(ev["End Date"]);
@@ -1386,6 +1403,18 @@ export function mergeGroup(group, candidates) {
   return out;
 }
 
+// AI 說「這場就是表上那一列」時，日期至少要對得上（容許改期 MAX_DATE_SHIFT_DAYS 天）。
+// 2026-09-21 排程發現：QPC Circuit 2026（10/12–21）一直被當成表上的 Quads Poker Championship Winter（12/12–23），
+// 所以從來沒被新增——同一個品牌的不同場次，AI 很容易併在一起。日期差這麼多就不是同一場。
+export function datesPlausiblySame(a, b) {
+  const s1 = parseYMD(a?.["Start Date"]);
+  const e1 = parseYMD(a?.["End Date"]) ?? s1;
+  const s2 = parseYMD(b?.["Start Date"]);
+  const e2 = parseYMD(b?.["End Date"]) ?? s2;
+  if (s1 == null || s2 == null) return true; // 日期壞掉的就不擋，照 AI 的判斷
+  return rangesOverlap(s1, e1, s2, e2, MAX_DATE_SHIFT_DAYS);
+}
+
 // 把 LLM 給的 matched_sheet_row 對回實際那一列
 export function findSheetRow(name, sheetRows) {
   // 名稱是空的或太短就不要猜——空字串會去比對到表格裡的空白列，然後把註記寫進那一列。
@@ -1823,11 +1852,16 @@ async function main() {
   const candidates = [];
   const tally = new Map(); // src -> { raw, kept }
 
-  const addEvents = (src, events) => {
+  const addEvents = (src, events, pageText = "") => {
     const t = tally.get(src) ?? { raw: 0, kept: 0, why: new Map() };
     for (const ev of events ?? []) {
       t.raw++;
       if (t.kept >= MAX_NEW_PER_SOURCE) continue; // 單一來源上限，防 LLM 幻覺灌爆表格
+      if (linkLooksRecurring(ev.detail_url, pageText)) {
+        const key = "例行賽程不是錦標賽系列";
+        t.why.set(key, (t.why.get(key) ?? 0) + 1);
+        continue;
+      }
       // 先補品牌再拿去比對系列連結——JOPT 的原始名稱是「2026 Sapporo #02」，
       // 補成「JOPT 2026 Sapporo #02」之後才對得到 japanopenpoker.com
       const name = applyBrand(stripCategoryPrefix(ev.tournament), src.brand);
@@ -1905,7 +1939,7 @@ async function main() {
         bucket.get(it?.src ?? fallback)?.push(ev);
       }
       if (misrouted) console.warn(`  ⚠️ 第 ${i + 1} 批有 ${misrouted} 筆沒標明來源，算到「${fallback.name}」`);
-      for (const [src, evs] of bucket) addEvents(src, evs);
+      for (const [src, evs] of bucket) addEvents(src, evs, batch.find((b) => b.src === src)?.text ?? "");
     } catch (e) {
       console.error(`❌ 第 ${i + 1} 批失敗（${names}）：${e.message}`);
     }
@@ -1945,9 +1979,19 @@ async function main() {
     const rows = g.idxs.map((i) => candidates[i]);
     const row = mergeGroup(g, candidates);
     // alreadyInSheet === null 代表 LLM 沒判（漏了或整個失敗）→ 用保守判定
-    const exists =
+    let exists =
       g.alreadyInSheet === null ? isDuplicateConservative(row, existing) : g.alreadyInSheet;
-    const sheetRow = exists ? findSheetRow(g.matched, existing) : null;
+    let sheetRow = exists ? findSheetRow(g.matched, existing) : null;
+    // AI 對到的那一列日期差太多 → 不是同一場，當成新的（見 datesPlausiblySame）。
+    // 取消註記也靠這個對應列，對錯列就會把別場標成取消，所以這道檢查要在前面
+    if (sheetRow && g.alreadyInSheet === true && !datesPlausiblySame(row, sheetRow)) {
+      console.log(
+        `  🔓 AI 說「${row.Tournament}」（${row["Start Date"]}~${row["End Date"]}）就是第 ${sheetRow._row} 列` +
+          `「${sheetRow.Tournament}」（${sheetRow["Start Date"]}~${sheetRow["End Date"]}），日期差太多，當成不同場`,
+      );
+      exists = false;
+      sheetRow = null;
+    }
 
     // 取消的判定也照 tier 優先序：主辦官網還在列這場，就不採信彙整站說的取消
     const minCancelTier = Math.min(...rows.filter((r) => r._cancelled).map((r) => r._tier), Infinity);
