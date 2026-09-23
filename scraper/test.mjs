@@ -758,7 +758,7 @@ eq("沒有保證獎金可比 → 買入最大的", chooseMainEvent("Poker Dream 
 eq("買入是空的那筆不算", chooseMainEvent("KPC", [{ name: "KPC MAIN EVENT", buyin: null, currency: "KRW" }]), null);
 eq("清單是空的／不是陣列 → null", [chooseMainEvent("KPC", []), chooseMainEvent("KPC", undefined), chooseMainEvent("KPC", "x")], [null, null, null]);
 
-console.log("\n【28】AI 對到的表上那一列，日期要對得上（2026-09-21：QPC Circuit 被當成 Quads Winter，一直沒新增）");
+console.log("\n【28】AI 對到的表上那一列，日期要對得上（同品牌不同場次不能併在一起）");
 const quadsWinter = { _row: 97, Tournament: "Quads Poker Championship Winter 2026", "Start Date": "2026/12/12", "End Date": "2026/12/23" };
 ok("QPC Circuit（10/12–21）vs Quads Winter（12/12–23）→ 不是同一場",
   !datesPlausiblySame({ "Start Date": "2026-10-12", "End Date": "2026-10-21" }, quadsWinter));

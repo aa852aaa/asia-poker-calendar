@@ -1422,9 +1422,10 @@ export function mergeGroup(group, candidates) {
   return out;
 }
 
-// AI 說「這場就是表上那一列」時，日期至少要對得上（容許改期 MAX_DATE_SHIFT_DAYS 天）。
-// 2026-09-21 排程發現：QPC Circuit 2026（10/12–21）一直被當成表上的 Quads Poker Championship Winter（12/12–23），
-// 所以從來沒被新增——同一個品牌的不同場次，AI 很容易併在一起。日期差這麼多就不是同一場。
+// AI 說「這場就是表上那一列」時，日期至少要對得上（容許改期 MAX_DATE_SHIFT_DAYS 天，跟改期偵測同一個門檻）。
+// 安全網：同一個品牌的不同場次（例如 Quads 10 月的 QPC Circuit 和 12 月的 Winter）AI 有可能併在一起，
+// 日期差這麼多就不是同一場。取消註記也靠這個對應列，對錯列會把別場標成取消。
+// （2026-09-24 加的；當時懷疑 QPC Circuit 被併掉，後來查明它早就在表上，只是買入 $418 低於門檻所以網站不顯示）
 export function datesPlausiblySame(a, b) {
   const s1 = parseYMD(a?.["Start Date"]);
   const e1 = parseYMD(a?.["End Date"]) ?? s1;
@@ -2056,7 +2057,7 @@ async function main() {
     // LLM 說表上沒有、但名稱幾乎一樣又日期重疊 → 保守當同一場（2026-09-19 試跑：「Special Event: WPT Seoul」
     // 差點跟表上的「WPT Seoul 2026」變成兩列）。這條路只補空欄位、不動日期——名稱包含關係也可能是活動節 vs 它的主賽。
     // 主辦方／場館方的賽事被判成「表上已有」時，印出對到哪一列（含日期），方便查
-    // （QPC Circuit 就是這樣悄悄消失好幾輪，log 裡什麼都看不出來）
+    // （2026-09-24 以為 QPC Circuit 不見了，log 裡看不出它對到哪一列，查了好幾輪才發現它早就在表上）
     if (exists && g.alreadyInSheet === true && row._bestTier <= 2) {
       const cand = `「${row.Tournament}」${row["Start Date"]}~${row["End Date"]}`;
       if (!sheetRow) {
