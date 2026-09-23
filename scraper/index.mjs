@@ -1415,6 +1415,15 @@ export function datesPlausiblySame(a, b) {
   return rangesOverlap(s1, e1, s2, e2, MAX_DATE_SHIFT_DAYS);
 }
 
+// 官網的「該場專屬頁」連結一樣 → 一定是同一場，不用靠 AI 認名字（2026-09-24 試跑：CTP 把 GOP Taipei 2026 II
+// 寫成「Gods of Poker: The Trial of Wisdom」，AI 分組沒認出來，差點新增一列重複的——兩邊的連結明明一模一樣）。
+// 系列首頁這種很多場共用的泛用連結不算；日期也要對得上。
+export function sameLinkRow(ev, sheetRows, genericLinks) {
+  const link = normalizeLink(ev?.["Handbook URL"]);
+  if (!link || isGenericLink(link, genericLinks)) return null;
+  return (sheetRows ?? []).find((r) => normalizeLink(r["Handbook URL"]) === link && datesPlausiblySame(ev, r)) ?? null;
+}
+
 // 把 LLM 給的 matched_sheet_row 對回實際那一列
 export function findSheetRow(name, sheetRows) {
   // 名稱是空的或太短就不要猜——空字串會去比對到表格裡的空白列，然後把註記寫進那一列。
@@ -2017,15 +2026,32 @@ async function main() {
     }
     // LLM 說表上沒有、但名稱幾乎一樣又日期重疊 → 保守當同一場（2026-09-19 試跑：「Special Event: WPT Seoul」
     // 差點跟表上的「WPT Seoul 2026」變成兩列）。這條路只補空欄位、不動日期——名稱包含關係也可能是活動節 vs 它的主賽。
-    const strictRow = !exists && g.alreadyInSheet !== null ? (existing.find((r) => isSameEventStrict(row, r)) ?? null) : null;
+    // 主辦方／場館方的賽事被判成「表上已有」、但名字跟對到的那列不太像時，印出來方便查
+    // （QPC Circuit 就是這樣悄悄消失好幾輪，log 裡什麼都看不出來）
+    if (exists && g.alreadyInSheet === true && row._bestTier <= 2) {
+      if (!sheetRow) {
+        console.log(`  ↳ 「${row.Tournament}」AI 說表上已有（對到「${g.matched}」），但找不到是哪一列，這輪不新增`);
+      } else if (jaccard(row.Tournament, sheetRow.Tournament) < 0.5) {
+        console.log(`  ↳ 「${row.Tournament}」→ 第 ${sheetRow._row} 列「${sheetRow.Tournament}」`);
+      }
+    }
+    // AI 說表上沒有的，再用確定性的規則檢查一次：官網專屬連結一樣（sameLinkRow），或名稱幾乎一樣且日期重疊（isSameEventStrict）
+    const linkRow = !exists ? sameLinkRow(row, existing, genericLinks) : null;
+    const strictRow =
+      !exists && !linkRow && g.alreadyInSheet !== null ? (existing.find((r) => isSameEventStrict(row, r)) ?? null) : null;
+    if (linkRow) {
+      console.log(`  🔗 「${row.Tournament}」跟第 ${linkRow._row} 列「${linkRow.Tournament}」的官網連結一樣，當同一場（不新增）`);
+    }
     if (strictRow) {
       console.log(`  🔒 「${row.Tournament}」跟第 ${strictRow._row} 列「${strictRow.Tournament}」名稱和日期都重疊，當同一場（不新增）`);
     }
-    if (exists || strictRow) {
+    const fallbackRow = linkRow ?? strictRow;
+    if (exists || fallbackRow) {
       skippedExisting++;
-      const target = exists ? sheetRow : strictRow;
-      // 同樣的道理：LLM 沒真的判過（走保守退路）就沒有可靠的對應列，不要去改表格
-      if (g.alreadyInSheet !== null && target) {
+      const target = exists ? sheetRow : fallbackRow;
+      // 同樣的道理：LLM 沒真的判過（走保守退路）就沒有可靠的對應列，不要去改表格——
+      // 連結一樣的例外，那是確定性的比對，不靠 AI
+      if ((g.alreadyInSheet !== null || linkRow) && target) {
         const chg = exists ? detectDateChange(row, target) : null;
         if (chg && !dateChanges.some((c) => c.row === chg.row)) dateChanges.push(chg);
         // 賽程表和報名費是後來才公布的，每輪都回頭補一次空欄位
@@ -2039,7 +2065,7 @@ async function main() {
       continue;
     }
     // 同批之間再擋一次，避免 LLM 分組沒抓到的重複
-    if (collected.some((c) => isDuplicateConservative(row, [c]))) continue;
+    if (collected.some((c) => isDuplicateConservative(row, [c]) || sameLinkRow(row, [c], genericLinks))) continue;
     collected.push(row);
   }
   console.log(

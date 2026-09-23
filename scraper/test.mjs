@@ -10,7 +10,7 @@ import {
   formatLocation, pickBuyIn, seriesLink, detectBlankFills, detailTargets, isTransientSheetsError,
   detectLinkFixes, needsBrowser, buildTodoList, normalizeLink, isGenericLink, sameDomain, hostOf,
   findPdfLinks, isPdfUrl, stripCategoryPrefix, isSameEventStrict, editionTokens, editionConflict, acceptSeries,
-  formatLikeSheet, amountsIn, chooseMainEvent, pdfTextUsable, datesPlausiblySame, linkLooksRecurring,
+  formatLikeSheet, amountsIn, chooseMainEvent, pdfTextUsable, datesPlausiblySame, linkLooksRecurring, sameLinkRow,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -764,6 +764,20 @@ ok("Quads 週賽的連結 → 例行賽程", linkLooksRecurring("https://quadspo
 ok("QPC Circuit（前面緊接著週賽）→ 不是例行賽程", !linkLooksRecurring("https://quadspoker.vn/series/38", quadsPage));
 ok("頁面上沒有這個連結 → 不擋", !linkLooksRecurring("https://quadspoker.vn/series/99", quadsPage));
 ok("沒有連結或沒有頁面文字 → 不擋", !linkLooksRecurring("", quadsPage) && !linkLooksRecurring("https://grandloyal.vn/series/117", ""));
+
+console.log("\n【30】官網專屬連結一樣就是同一場（2026-09-24 試跑：CTP 寫的「Gods of Poker: The Trial of Wisdom」差點變成重複列）");
+const gopRow = { _row: 63, Tournament: "GOP Taipei 2026 II (詳細尚未公布)", "Start Date": "2026/09/18", "End Date": "2026/09/27",
+  "Handbook URL": "https://godsofpoker.com/series/taipei-2026-ii" };
+const ctpGop = { Tournament: "Gods of Poker: The Trial of Wisdom", "Start Date": "2026-09-18", "End Date": "2026-09-27",
+  "Handbook URL": "https://godsofpoker.com/series/taipei-2026-ii" };
+eq("名字完全不像，但專屬連結一樣 → 對到第 63 列", sameLinkRow(ctpGop, [quadsWinter, gopRow], srcGeneric)?._row, 63);
+eq("連結差 www／結尾斜線也算一樣", sameLinkRow({ ...ctpGop, "Handbook URL": "https://www.godsofpoker.com/series/taipei-2026-ii/" }, [gopRow], srcGeneric)?._row, 63);
+const manilaA = { Tournament: "Manila Super Series 25", "Start Date": "2027-01-22", "End Date": "2027-01-31", "Handbook URL": "https://www.pokerstarslivemanila.com/tournaments/" };
+const manilaB = { _row: 126, Tournament: "Manila Megastack 26", "Start Date": "2027/02/22", "End Date": "2027/03/07", "Handbook URL": "https://www.pokerstarslivemanila.com/tournaments/" };
+eq("系列首頁這種很多場共用的泛用連結 → 不算", sameLinkRow(manilaA, [manilaB], srcGeneric), null);
+eq("同一個專屬連結但日期差很多（下一屆沿用同一頁）→ 不算",
+  sameLinkRow({ ...ctpGop, "Start Date": "2027-09-17", "End Date": "2027-09-26" }, [gopRow], srcGeneric), null);
+eq("沒有連結 → 不算", sameLinkRow({ ...ctpGop, "Handbook URL": "" }, [gopRow], srcGeneric), null);
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);
