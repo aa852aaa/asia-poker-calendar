@@ -43,7 +43,12 @@ const GEMINI_DAILY_LIMIT = envInt("GEMINI_DAILY_LIMIT", 20);
 const MAX_DETAIL_CALLS = envInt("MAX_DETAIL_CALLS", 20);
 const DETAIL_LOOKAHEAD_DAYS = 90; // 既有列買入還是空的：只回頭抓「這幾天內開賽」的（報名費通常這時候才公布）
 const BATCH_CHAR_LIMIT = 120_000; // 一批合併送給 LLM 的文字上限
-const BATCH_MAX_SOURCES = 5; // 一批最多幾個來源
+// 一批最多幾個來源。以前額度每天只有 20 次，所以 5 個來源併成一次呼叫；換成每天 500 次的 lite 模型後，
+// 合併反而變成漏抓的主因——lite 模型一次讀 5 個頁面會漏掉小來源的賽事，同一個站這輪抽到 1 筆、下輪 0 筆
+// （2026-09-24：Quads 官網明明列著 QPC Circuit，連續兩輪都沒抽出來）。現在額度夠（每日 ≥ 100）就一個來源一次呼叫，
+// 每輪多用十幾次額度換穩定；額度小（沒設 GEMINI_DAILY_LIMIT、退回 20）才照舊合併，不然會把當日額度燒光。
+// 要手動調就設環境變數 BATCH_MAX_SOURCES。
+const BATCH_MAX_SOURCES = envInt("BATCH_MAX_SOURCES", GEMINI_DAILY_LIMIT >= 100 ? 1 : 5);
 // 抽取和去重是必要的，詳情頁補買入是加值，所以額度快用完時先犧牲詳情頁。留 10% 餘裕給重試。
 const GEMINI_DAILY_BUDGET = Math.max(4, Math.floor(GEMINI_DAILY_LIMIT * 0.9));
 const LONG_FESTIVAL_DAYS = 21; // 超過這個天數就在預覽標 ⚠️ 提醒人看一眼（不擋，只提醒）
@@ -1949,7 +1954,9 @@ async function main() {
   const batches = packBatches(fetched);
   if (fetched.length) {
     console.log(
-      `網頁來源 ${fetched.length} 個 → 併成 ${batches.length} 批送 AI（省下 ${fetched.length - batches.length} 次呼叫）`,
+      batches.length === fetched.length
+        ? `網頁來源 ${fetched.length} 個，每個分開送 AI（${fetched.length} 次呼叫）`
+        : `網頁來源 ${fetched.length} 個 → 併成 ${batches.length} 批送 AI（省下 ${fetched.length - batches.length} 次呼叫）`,
     );
   }
 
