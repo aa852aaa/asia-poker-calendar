@@ -73,49 +73,77 @@ function soonText(dLeft: number | null): string {
   return `（已結束 ${Math.abs(dLeft)} 天）`;
 }
 
-// 快選 chips：顯示中文，但比對用英文關鍵字——舊列只有英文地點、新列是雙語，英文兩種都對得到
+// 快選 chips：顯示中文，比對時中英文關鍵字都認——舊列只有英文地點、新列是雙語
 const QUICK_LOCATIONS = [
-  { label: "台灣", key: "Taiwan" },
-  { label: "韓國", key: "Korea" },
+  { label: "台灣", key: "Taiwan", match: ["taiwan", "台灣"] },
+  { label: "韓國", key: "Korea", match: ["korea", "韓國"] },
+  { label: "越南", key: "Vietnam", match: ["vietnam", "越南"] },
 ] as const;
+
+// 澳洲是「加選」：預設不出現，按了「＋ 澳洲」才加進清單（2026-09-24 Wei 指定）
+function isAustralia(loc: string | undefined): boolean {
+  return /australia|澳洲/i.test(String(loc ?? ""));
+}
+
+function matchesQuery(r: Row, q: string): boolean {
+  if (!q) return true;
+  return norm(r["Tournament"]).includes(q) || norm(r["Location"]).includes(q);
+}
 
 export default function ScheduleTable({ rows }: { rows: Row[] }) {
   const [locationPick, setLocationPick] = useState<string>("ALL");
   const [tournamentQuery, setTournamentQuery] = useState<string>("");
+  const [showAustralia, setShowAustralia] = useState(false);
 
-  // 下拉：完整 Location 清單
+  // 下拉：地點清單，用顯示的那行（中文）去重——同一個城市的英文可能寫法不同（雪梨 Sydney / Pyrmont），
+  // 用完整字串當選項會出現兩個一模一樣的「澳洲 雪梨」。澳洲沒加選時不列
   const locations = useMemo(() => {
     const set = new Set<string>();
     for (const r of rows) {
       const loc = String(r["Location"] ?? "").trim();
-      if (loc) set.add(loc);
+      if (loc && (showAustralia || !isAustralia(loc))) set.add(locationLabel(loc));
     }
-    return Array.from(set).sort((a, b) => locationLabel(a).localeCompare(locationLabel(b), "zh-Hant"));
-  }, [rows]);
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "zh-Hant"));
+  }, [rows, showAustralia]);
+
+  const toggleAustralia = () => {
+    const next = !showAustralia;
+    setShowAustralia(next);
+    // 關掉時如果下拉還停在某個澳洲城市，那個選項已經不在清單裡了，退回「全部」
+    if (!next && isAustralia(locationPick)) setLocationPick("ALL");
+  };
 
   const filtered = useMemo(() => {
     const q = norm(tournamentQuery);
-    const locAll = locationPick === "ALL";
-    const quickKeys: readonly string[] = QUICK_LOCATIONS.map((x) => x.key);
+    const quick = QUICK_LOCATIONS.find((x) => x.key === locationPick);
 
     return rows.filter((r) => {
       const locRaw = String(r["Location"] ?? "").trim();
 
-      // Location 篩選：下拉用全等，chips 用包含
-      let locOk = true;
-      if (!locAll) {
-        const isQuick = quickKeys.includes(locationPick);
-        locOk = isQuick ? norm(locRaw).includes(norm(locationPick)) : locRaw === locationPick;
+      if (isAustralia(locRaw)) {
+        // 澳洲是加選：沒按「＋ 澳洲」就不出現；按了就加進目前的清單（不管上面選了哪個地區），
+        // 只有下拉明確選了某個澳洲城市時，才只留那個城市
+        if (!showAustralia) return false;
+        if (isAustralia(locationPick) && locationLabel(locRaw) !== locationPick) return false;
+      } else if (locationPick !== "ALL") {
+        // Location 篩選：下拉比對顯示的那行，chips 用包含
+        const loc = norm(locRaw);
+        const ok = quick ? quick.match.some((k) => loc.includes(k)) : locationLabel(locRaw) === locationPick;
+        if (!ok) return false;
       }
-      if (!locOk) return false;
 
-      if (!q) return true;
-
-      const t = norm(r["Tournament"]);
-      const l = norm(r["Location"]);
-      return t.includes(q) || l.includes(q);
+      return matchesQuery(r, q);
     });
-  }, [rows, locationPick, tournamentQuery]);
+  }, [rows, locationPick, tournamentQuery, showAustralia]);
+
+  // 澳洲有幾場符合目前的搜尋：標在「＋ 澳洲」上，讓人知道按下去會多出幾場
+  const australiaTotal = useMemo(() => rows.filter((r) => isAustralia(r["Location"])).length, [rows]);
+  const australiaMatches = useMemo(() => {
+    const q = norm(tournamentQuery);
+    return rows.filter((r) => isAustralia(r["Location"]) && matchesQuery(r, q)).length;
+  }, [rows, tournamentQuery]);
+  // 「顯示 N / 總數」的總數只算目前範圍內的：澳洲沒加選時不算澳洲
+  const scopeTotal = showAustralia ? rows.length : rows.length - australiaTotal;
 
   const igUrl = "https://www.instagram.com/a.smallbean_poker"; // 你要換 IG 就改這裡
 
@@ -129,7 +157,7 @@ export default function ScheduleTable({ rows }: { rows: Row[] }) {
             <option value="ALL">全部</option>
             {locations.map((loc) => (
               <option key={loc} value={loc}>
-                {locationLabel(loc)}
+                {loc}
               </option>
             ))}
           </select>
@@ -146,7 +174,7 @@ export default function ScheduleTable({ rows }: { rows: Row[] }) {
         </label>
 
         <div className="resultCount">
-          顯示 <b>{filtered.length}</b> / {rows.length} 場
+          顯示 <b>{filtered.length}</b> / {scopeTotal} 場
         </div>
       </div>
 
@@ -166,6 +194,17 @@ export default function ScheduleTable({ rows }: { rows: Row[] }) {
             {label}
           </button>
         ))}
+
+        {/* 加選：跟上面的地區是分開的開關，按了把澳洲賽事加進目前的清單，再按一次拿掉 */}
+        <button
+          onClick={toggleAustralia}
+          className={`chip chipAddon ${showAustralia ? "chipActive" : ""}`}
+          aria-pressed={showAustralia}
+          title={showAustralia ? "拿掉澳洲賽事" : "加入澳洲賽事"}
+        >
+          {showAustralia ? "✓" : "＋"} 澳洲
+          {australiaMatches > 0 && <span className="chipCount">{australiaMatches}</span>}
+        </button>
       </div>
 
       {/* 桌機：表格 */}
