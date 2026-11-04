@@ -11,6 +11,7 @@ import {
   detectLinkFixes, needsBrowser, buildTodoList, normalizeLink, isGenericLink, sameDomain, hostOf,
   findPdfLinks, isPdfUrl, stripCategoryPrefix, isSameEventStrict, editionTokens, editionConflict, acceptSeries,
   formatLikeSheet, amountsIn, chooseMainEvent, pdfTextUsable, datesPlausiblySame, linkLooksRecurring, sameLinkRow,
+  festivalRangeFromSchedule, scheduleUrlFor,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -795,6 +796,47 @@ eq("系列首頁這種很多場共用的泛用連結 → 不算", sameLinkRow(ma
 eq("同一個專屬連結但日期差很多（下一屆沿用同一頁）→ 不算",
   sameLinkRow({ ...ctpGop, "Start Date": "2027-09-17", "End Date": "2027-09-26" }, [gopRow], srcGeneric), null);
 eq("沒有連結 → 不算", sameLinkRow({ ...ctpGop, "Handbook URL": "" }, [gopRow], srcGeneric), null);
+
+console.log("\n【31】表上要整檔賽事節的日期，不是主賽的（2026-11-04：WPT Prime Taiwan 被寫成主賽 1/7–11，整檔是 1/2–11）");
+// WPT 賽程頁 htmlToText 之後的樣子（節錄自真實頁面）：最上面的跑馬燈是別場（Seoul），每天一個「Sat, Jan 2」標題
+const wptTaiwanSchedule = "Play Online SPECIAL EVENT 5 – 9 Nov Seoul › SPECIAL EVENT: WPT PRIME TAIWAN Chinese Texas Hold'em Poker Association, Taipei Jan 7-11 [link:https://www.worldpokertour.com/event/special-events-special-event-wpt-prime-taiwan-season-2027/schedule] Schedule SCHEDULE Start times are in venue time. Sat, Jan 2 Buy-in Guarantee 12:00 PM NEW YEAR OPENER D1A TO ITM GTD TWD 500,000 Sun, Jan 3 Buy-in 11:00 AM CHAMPIONSHIP WARM UP D1B Mon, Jan 4 Tue, Jan 5 Wed, Jan 6 Thu, Jan 7 11:30 AM WPT® PRIME CHAMPIONSHIP EVENT D1A Fri, Jan 8 Sat, Jan 9 Sun, Jan 10 Mon, Jan 11 11:30 AM WPT® PRIME CHAMPIONSHIP EVENT D3 FINAL* 7:05 PM 5/5/5 FINALE 5 SEC";
+eq("WPT Prime Taiwan 主賽 1/7–11 → 整檔 1/2–1/11", festivalRangeFromSchedule(wptTaiwanSchedule, "2027-01-07", "2027-01-11"),
+  { start: "2027-01-02", end: "2027-01-11", days: 10 });
+eq("還沒公布（WPT Seoul、Cambodia 現在的樣子）→ null",
+  festivalRangeFromSchedule("SCHEDULE The schedule for this event has not been published yet. BOOK YOUR STAY Nov 5-9", "2026-11-05", "2026-11-09"), null);
+eq("跨年：12 月就開打的 → 年份往前推一年", festivalRangeFromSchedule("Mon, Dec 28 Tue, Dec 29 Sat, Jan 9", "2027-01-05", "2027-01-09"),
+  { start: "2026-12-28", end: "2027-01-09", days: 3 });
+eq("星期幾對不上的不算（2027/1/2 是星期六，不是星期五）", festivalRangeFromSchedule("Fri, Jan 2 Sat, Jan 9 Sun, Jan 10", "2027-01-07", "2027-01-11"),
+  { start: "2027-01-07", end: "2027-01-11", days: 2 });
+eq("離主賽太遠的日期（下一屆預告、新聞）略過", festivalRangeFromSchedule("Sat, Jan 2 Sun, Jan 3 Thu, Mar 4", "2027-01-07", "2027-01-11")?.end, "2027-01-11");
+eq("只有零星一天 → 不算公布了賽程", festivalRangeFromSchedule("Sat, Jan 2", "2027-01-07", "2027-01-11"), null);
+eq("全大寫、全名的寫法也認得", festivalRangeFromSchedule("SATURDAY, JANUARY 2 SUNDAY, JANUARY 3", "2027-01-07", "2027-01-11")?.start, "2027-01-02");
+eq("主賽日期壞掉 → null（不猜）", festivalRangeFromSchedule(wptTaiwanSchedule, "TBA", ""), null);
+eq("專屬頁接 /schedule", scheduleUrlFor("https://www.worldpokertour.com/event/special-events-special-event-wpt-prime-taiwan-season-2027", "/schedule"),
+  "https://www.worldpokertour.com/event/special-events-special-event-wpt-prime-taiwan-season-2027/schedule");
+eq("表上寫成 /details 的也換得過去", scheduleUrlFor("https://www.worldpokertour.com/event/special-events-special-event-wpt-seoul-season-2026/details/", "/schedule"),
+  "https://www.worldpokertour.com/event/special-events-special-event-wpt-seoul-season-2026/schedule");
+eq("沒有連結 → 空字串", scheduleUrlFor("", "/schedule"), "");
+
+// 合併：WPT 只有主賽日期時，同組別的來源列的範圍包得住主賽就用它的；日期是誰給的要記，改期偵測只信 tier 1/2 給的日期
+const wptMain = { "Start Date": "2027-01-07", "End Date": "2027-01-11", Location: "Taipei, Taiwan", Tournament: "WPT Prime Taiwan",
+  "Handbook URL": "https://www.worldpokertour.com/event/special-events-special-event-wpt-prime-taiwan-season-2027", _tier: 1, _src: "WPT", _noDateUpdate: true };
+const smpFest = { "Start Date": "2027-01-02", "End Date": "2027-01-11", Location: "Taipei City, Taiwan", Tournament: "WPT Prime Taiwan 2027",
+  "Handbook URL": "", _tier: 3, _src: "SoMuchPoker" };
+const row138 = { _row: 138, Tournament: "WPT Prime Taiwan", "Start Date": "2027/01/07", "End Date": "2027/01/11" };
+const mw = mergeGroup({ idxs: [0, 1] }, [wptMain, smpFest]);
+eq("WPT 只有主賽、SoMuchPoker 有整檔 → 新增列用整檔 1/2–1/11", [mw["Start Date"], mw["End Date"]], ["2027-01-02", "2027-01-11"]);
+eq("名稱、連結還是取 T1 的", [mw.Tournament, mw["Handbook URL"]], [wptMain.Tournament, wptMain["Handbook URL"]]);
+eq("日期是 T3 給的 → _dateTier 3", mw._dateTier, 3);
+eq("彙整站補的整檔日期不拿來改表上既有的", detectDateChange(mw, row138), null);
+eq("別的來源的範圍沒包住主賽 → 還是用主賽日期",
+  mergeGroup({ idxs: [0, 1] }, [wptMain, { ...smpFest, "End Date": "2027-01-09" }])["Start Date"], "2027-01-07");
+eq("多出來超過 21 天的不算（可能是別場）",
+  mergeGroup({ idxs: [0, 1] }, [wptMain, { ...smpFest, "Start Date": "2026-12-01" }])["Start Date"], "2027-01-07");
+// WPT 自己的賽程頁讀到整檔（widenToFestival 會拿掉 _noDateUpdate）→ T1 的整檔日期可以改表上的
+const chgWide = detectDateChange(mergeGroup({ idxs: [0, 1] }, [{ ...wptMain, "Start Date": "2027-01-02", _noDateUpdate: false }, smpFest]), row138);
+eq("WPT 賽程頁讀到整檔 → 第 138 列 1/7 改成 1/2", [chgWide?.row, chgWide?.newStart, chgWide?.newEnd], [138, "2027-01-02", "2027/01/11"]);
+eq("改期依據寫的是給日期的來源", chgWide?.src, "T1:WPT");
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);

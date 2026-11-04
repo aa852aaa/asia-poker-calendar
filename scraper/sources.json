@@ -131,8 +131,9 @@
       "type": "html",
       "url": "https://www.worldpokertour.com/events/",
       "browser": true,
-      "note": "純 fetch 一律 403，Playwright 可開（2026-09-19 試跑從 GitHub 機房也過了）。/events/ 有日期、場館、買入、專屬連結。全球賽事都列，地區規則只會留亞太的。列的是主賽事日期不是整檔賽事節（WPT Seoul 官網 11/05–09，表上 10/30–11/09），所以 noDateUpdate：日期只拿來新增列，不拿來改表上既有的",
-      "noDateUpdate": true
+      "note": "純 fetch 一律 403，Playwright 可開（2026-09-19 試跑從 GitHub 機房也過了）。/events/ 有日期、場館、買入、專屬連結。全球賽事都列，地區規則只會留亞太的。列表頁和 /details 寫的是主賽事日期不是整檔賽事節（WPT Prime Taiwan 主賽 1/7–11，整檔 1/2–11）。整檔賽程在各場專屬頁 + schedulePath（/schedule），一天一個「Sat, Jan 2」標題，程式直接讀頭尾日期；還沒公布的（WPT Seoul、Cambodia 寫 not been published yet）才退回主賽日期，這時 noDateUpdate：不拿來改表上既有的",
+      "noDateUpdate": true,
+      "schedulePath": "/schedule"
     },
     {
       "tier": 2,
@@ -446,5 +447,5 @@
     "poker-dream.com",
     "worldpokertour.com"
   ],
-  "_預設地點說明": "來源設了 location 的話，抽出來的賽事地點是空的就用它。只給「所有賽事一定在同一個地方」的來源設（CTP 是台北的場館）；ZSOP、HPC 這種巡迴賽不一定在台北，不能設，地點要靠頁面上寫的。 noDateUpdate: true 的來源，日期只用來新增列、不拿來改表上既有列的日期（官網只列主賽事日期、比整檔賽事節短的站，例如 WPT）。"
+  "_預設地點說明": "來源設了 location 的話，抽出來的賽事地點是空的就用它。只給「所有賽事一定在同一個地方」的來源設（CTP 是台北的場館）；ZSOP、HPC 這種巡迴賽不一定在台北，不能設，地點要靠頁面上寫的。 noDateUpdate: true 的來源＝官網只列主賽事日期、比整檔賽事節短的站（例如 WPT）。表上要的是整檔賽事節：設了 schedulePath 就去「該場專屬頁 + schedulePath」讀整檔賽程的頭尾日期，讀到了照常拿來新增、改期；讀不到（還沒公布）才用主賽日期，而且不拿來改表上既有列的日期。同一場有別的來源列出包住主賽的範圍時，新增列用那個範圍。"
 }

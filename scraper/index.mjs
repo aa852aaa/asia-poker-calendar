@@ -627,6 +627,8 @@ function listingPrompt(items, today) {
 
 其他規則：
 - 日期一律輸出 YYYY-MM-DD，年份要依上下文推斷正確。
+- start_date／end_date 是「整檔賽事節」的頭尾：第一個賽事開始那天到最後一個賽事結束那天，不是主賽事（Main Event）的日期。
+  頁面同時寫了整檔日期和主賽日期時取整檔的；只寫了一組日期就照寫，不要自己推算。
 - 只列「今天（${today}）當天或之後才結束」的系列；已結束的不要。
 - 頁面上標示為取消的（CANCELLED / ***CANCELLED*** / 已取消 / 中止）**也要輸出**，但把 cancelled 設成 true，
   而且 tournament 要填「拿掉取消字樣之後的原始賽事名稱」（例如頁面寫「***CANCELLED*** Poker Dream 27 Jeju」，
@@ -1023,6 +1025,65 @@ export function festivalDays(ev) {
   return s == null || e == null ? 0 : Math.round((e - s) / 86400_000) + 1;
 }
 
+// ---------- 整檔賽事節的日期（官網只列主賽日期的來源）----------
+// 表上的日期一律是整檔賽事節的頭尾（Wei 2026-11-04 指定），不是主賽事的。WPT 的列表頁和 /details 頁寫的是
+// 主賽事日期（WPT Prime Taiwan 主賽 1/7–11），整檔（1/2–11）只在各場專屬頁的 /schedule：一天一個「Sat, Jan 2」標題。
+// 格式固定，用程式讀就好，不花 AI 額度也不會看錯。頁面上沒寫年份，用主賽日期推：只收「星期幾對得上、
+// 又在主賽前後 FESTIVAL_AROUND_MAIN_DAYS 天內」的日期，對不上的（新聞、下一屆的預告）直接略過。
+// 整檔一定包住主賽，所以結果再跟主賽日期取聯集。
+const FESTIVAL_AROUND_MAIN_DAYS = 21;
+const WEEKDAY_NAMES = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+const MONTH_NAMES = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+const SCHEDULE_DAY =
+  /\b(sun|mon|tue|wed|thu|fri|sat)[a-z]*\.?,?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\b/gi;
+
+export function festivalRangeFromSchedule(text, mainStart, mainEnd) {
+  const s0 = parseYMD(mainStart);
+  const e0 = parseYMD(mainEnd) ?? s0;
+  if (s0 == null) return null;
+  const slack = FESTIVAL_AROUND_MAIN_DAYS * 86400_000;
+  const y0 = Number(String(mainStart).trim().slice(0, 4));
+  const days = new Set();
+  for (const m of String(text ?? "").matchAll(SCHEDULE_DAY)) {
+    const wd = WEEKDAY_NAMES.indexOf(m[1].toLowerCase());
+    const mo = MONTH_NAMES.indexOf(m[2].toLowerCase());
+    for (const y of [y0 - 1, y0, y0 + 1]) {
+      const d = new Date(Date.UTC(y, mo, Number(m[3])));
+      if (d.getUTCMonth() !== mo || d.getUTCDay() !== wd) continue; // 不存在的日子（2/30）、星期幾對不上
+      const ts = parseYMD(d.toISOString().slice(0, 10));
+      if (ts >= s0 - slack && ts <= e0 + slack) days.add(ts);
+    }
+  }
+  if (days.size < 2) return null; // 只有零星一天不算公布了整檔賽程
+  const toYMD = (ts) => new Date(ts).toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" });
+  return { start: toYMD(Math.min(s0, ...days)), end: toYMD(Math.max(e0, ...days)), days: days.size };
+}
+
+// 該場專屬頁 → 整檔賽程頁：WPT 是 /event/<場次>（表上有些寫成 /event/<場次>/details）後面接 /schedule
+export function scheduleUrlFor(link, schedulePath) {
+  if (!link || !schedulePath) return "";
+  try {
+    const u = new URL(link);
+    u.pathname = u.pathname.replace(/\/+$/, "").replace(/\/(details|schedule)$/i, "") + schedulePath;
+    u.search = "";
+    u.hash = "";
+    return u.href;
+  } catch {
+    return "";
+  }
+}
+
+// 同一場賽事，另一個來源列的範圍「包住主賽、前後多出來的不超過 FESTIVAL_AROUND_MAIN_DAYS 天」→ 那是整檔賽事節
+function wrapsMainEvent(fest, main) {
+  const s = parseYMD(fest?.["Start Date"]);
+  const e = parseYMD(fest?.["End Date"]) ?? s;
+  const s0 = parseYMD(main?.["Start Date"]);
+  const e0 = parseYMD(main?.["End Date"]) ?? s0;
+  if (s == null || s0 == null) return false;
+  const slack = FESTIVAL_AROUND_MAIN_DAYS * 86400_000;
+  return s <= s0 && e >= e0 && s0 - s <= slack && e - e0 <= slack;
+}
+
 // Wei 手填的 Location 是雙語：「台灣 台北\nTaipei, Taiwan」、只有國家時是「馬來西亞 \nMalaysia」。
 // 爬蟲原本只寫英文，混在表裡看起來很突兀，所以照他的格式補上中文。
 const ZH_COUNTRY = {
@@ -1396,6 +1457,11 @@ async function groupCandidates(candidates, sheetRows) {
 export function mergeGroup(group, candidates) {
   const rows = group.idxs.map((i) => candidates[i]).sort((a, b) => a._tier - b._tier);
   const out = { ...rows[0] };
+  // 日期：tier 最小的那筆只有主賽日期（WPT 的整檔賽程還沒公布）時，同組別的來源列的範圍包得住主賽，
+  // 就用它的——那才是整檔賽事節（WPT Prime Taiwan：WPT 寫主賽 1/7–11，SoMuchPoker 寫整檔 1/2–11）
+  const dateDonor = (rows[0]._noDateUpdate && rows.find((r) => !r._noDateUpdate && wrapsMainEvent(r, rows[0]))) || rows[0];
+  out["Start Date"] = dateDonor["Start Date"];
+  out["End Date"] = dateDonor["End Date"];
   // 連結是哪個來源給的要記下來：升級既有列的泛用連結時，只信主辦方／場館方（tier 1、2）給的專屬頁
   let linkDonor = rows[0]["Handbook URL"] ? rows[0] : null;
   for (const f of ["Start Date", "End Date", "Location", "Tournament", "Handbook URL"]) {
@@ -1418,7 +1484,10 @@ export function mergeGroup(group, candidates) {
   out._bestTier = rows[0]._tier;
   out._linkTier = linkDonor ? linkDonor._tier : Infinity;
   out._linkHost = linkDonor ? String(linkDonor._srcHost ?? "") : "";
-  out._noDateUpdate = rows[0]._noDateUpdate === true;
+  // 改期偵測看的是「日期是誰給的」，不是整組最好的 tier：彙整站補的整檔日期不拿來改表
+  out._dateTier = dateDonor._tier;
+  out._dateSrc = `T${dateDonor._tier}:${dateDonor._src}`;
+  out._noDateUpdate = dateDonor._noDateUpdate === true;
   return out;
 }
 
@@ -1826,8 +1895,8 @@ export function detectLinkFixes(existing, linkFixes) {
 // 改期偵測：既有列的日期 vs 主辦方（tier 1/2）現在公布的日期
 export function detectDateChange(merged, sheetRow) {
   if (!sheetRow) return null;
-  if (merged._bestTier > 2) return null; // 只信主辦方與場館方，彙整站的日期不拿來改人工資料
-  if (merged._noDateUpdate) return null; // 來源列的只是主賽日期（WPT），不能拿來縮短整檔賽事節
+  if ((merged._dateTier ?? merged._bestTier) > 2) return null; // 只信主辦方與場館方，彙整站的日期不拿來改人工資料
+  if (merged._noDateUpdate) return null; // 只是主賽日期（WPT 的整檔賽程還沒公布），不能拿來縮短整檔賽事節
   const changes = {};
   for (const [f, key] of [["Start Date", "newStart"], ["End Date", "newEnd"]]) {
     const oldTs = parseYMD(sheetRow[f]);
@@ -1844,8 +1913,41 @@ export function detectDateChange(merged, sheetRow) {
     oldEnd: sheetRow["End Date"],
     newStart: changes.newStart ?? sheetRow["Start Date"],
     newEnd: changes.newEnd ?? sheetRow["End Date"],
-    src: merged._srcs[0],
+    src: merged._dateSrc ?? merged._srcs[0],
   };
+}
+
+// 來源標了 schedulePath 的（WPT）：每個候選去讀它的整檔賽程頁，讀到了就把日期換成整檔賽事節，
+// 這時的日期也可以拿來改表上的了（拿掉 _noDateUpdate）。還沒公布（WPT Seoul、Cambodia 的頁面寫
+// 「The schedule for this event has not been published yet.」）或抓不到，就維持主賽日期和 noDateUpdate，下一輪再試。
+async function widenToFestival(candidates, genericLinks) {
+  const todo = candidates.filter((c) => c._schedulePath);
+  if (!todo.length) return;
+  console.log(`\n=== 官網只列主賽日期的 ${todo.length} 筆：去賽程頁找整檔賽事節的日期 ===`);
+  for (const c of todo) {
+    const link = String(c["Handbook URL"] ?? "").trim();
+    // 系列首頁這種泛用連結接上 /schedule 不是這場的賽程頁，只認來源自己網站上的專屬頁
+    const own = link && !isGenericLink(link, genericLinks) && hostOf(link) === c._srcHost;
+    const url = own ? scheduleUrlFor(link, c._schedulePath) : "";
+    const meDates = `${c["Start Date"]}~${c["End Date"]}`;
+    if (!url) {
+      console.log(`  📅 「${c.Tournament}」沒有專屬連結，維持主賽日期 ${meDates}`);
+      continue;
+    }
+    try {
+      const r = festivalRangeFromSchedule(htmlToText(await fetchPage(url), url), c["Start Date"], c["End Date"]);
+      if (!r) {
+        console.log(`  📅 「${c.Tournament}」整檔賽程還沒公布，維持主賽日期 ${meDates}（不拿來改表上的日期）`);
+        continue;
+      }
+      c["Start Date"] = r.start;
+      c["End Date"] = r.end;
+      c._noDateUpdate = false;
+      console.log(`  📅 「${c.Tournament}」主賽 ${meDates} → 整檔 ${r.start}~${r.end}（賽程頁列了 ${r.days} 天）`);
+    } catch (e) {
+      console.warn(`  📅 「${c.Tournament}」賽程頁抓不到（${e.message}），維持主賽日期 ${meDates}`);
+    }
+  }
 }
 
 // ---------- 主流程 ----------
@@ -1916,9 +2018,10 @@ async function main() {
         _tier: src.tier,
         _src: src.name.split(" ")[0],
         _srcHost: hostOf(src.url), // 連結升級時用來確認專屬頁真的在這個來源的網站上
-        // WPT 官網列的是主賽事日期，不是整檔賽事節（WPT Seoul 表上 10/30–11/09，官網 11/05–09）：
-        // 這種來源的日期只拿來新增列，不拿來改表上既有的日期
+        // WPT 官網列的是主賽事日期，不是整檔賽事節（WPT Prime Taiwan 主賽 1/7–11，整檔 1/2–11）：
+        // 這種來源的日期不拿來改表上既有的日期，除非 widenToFestival 從賽程頁（schedulePath）讀到了整檔的頭尾
         _noDateUpdate: src.noDateUpdate === true,
+        _schedulePath: src.schedulePath ?? "",
         _cancelled: ev.cancelled === true,
       };
       const bad = validateEvent(row, todayTs);
@@ -1995,6 +2098,8 @@ async function main() {
     console.log("\n所有來源都沒有抓到有效賽程，本次結束。");
     return;
   }
+  // 官網只列主賽日期的（WPT）：先去各場的賽程頁換成整檔賽事節的日期，分組去重和改期偵測才會用到對的日期
+  await widenToFestival(candidates, genericLinks);
   console.log(`\n=== 候選合計 ${candidates.length} 筆，開始分組去重 ===`);
 
   // ── 第 2 段：LLM 分組 + 與 Sheet 去重 + 改期偵測 ──
@@ -2220,6 +2325,9 @@ async function main() {
     delete ev._linkTier;
     delete ev._linkHost;
     delete ev._noDateUpdate;
+    delete ev._schedulePath;
+    delete ev._dateTier;
+    delete ev._dateSrc;
     if (headers.includes("Source")) ev["Source"] = "AI";
   }
 
