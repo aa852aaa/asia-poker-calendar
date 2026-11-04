@@ -11,7 +11,7 @@ import {
   detectLinkFixes, needsBrowser, buildTodoList, normalizeLink, isGenericLink, sameDomain, hostOf,
   findPdfLinks, isPdfUrl, stripCategoryPrefix, isSameEventStrict, editionTokens, editionConflict, acceptSeries,
   formatLikeSheet, amountsIn, chooseMainEvent, pdfTextUsable, datesPlausiblySame, linkLooksRecurring, sameLinkRow,
-  festivalRangeFromSchedule, scheduleUrlFor,
+  festivalRangeFromSchedule, scheduleUrlFor, siblingRowForLink,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -837,6 +837,30 @@ eq("多出來超過 21 天的不算（可能是別場）",
 const chgWide = detectDateChange(mergeGroup({ idxs: [0, 1] }, [{ ...wptMain, "Start Date": "2027-01-02", _noDateUpdate: false }, smpFest]), row138);
 eq("WPT 賽程頁讀到整檔 → 第 138 列 1/7 改成 1/2", [chgWide?.row, chgWide?.newStart, chgWide?.newEnd], [138, "2027-01-02", "2027/01/11"]);
 eq("改期依據寫的是給日期的來源", chgWide?.src, "T1:WPT");
+
+console.log("\n【32】補買入時別認錯檔期（2026-11-02：8 月的 WPT Prime Taiwan (second special) 被配到 1 月那場的連結和買入）");
+const janLink = "https://www.worldpokertour.com/event/special-events-special-event-wpt-prime-taiwan-season-2027";
+const augWhen = { "Start Date": "2027-08-12", "End Date": "2027-08-23" };
+// AI 讀 WPT 官網列表頁的回答：名稱一樣、自己說是同一場，但列表上那場是 1 月的
+const wptListAnswer = { me_buyin: 35000, currency: "TWD", series_name: "Special Event: WPT Prime Taiwan", same_series: true,
+  series_start: "2027-01-07", series_end: "2027-01-11", handbook_url: janLink };
+ok("8 月那場 vs 頁面上 1 月那場 → 拒收（AI 說是也一樣）", !acceptSeries("WPT Prime Taiwan 2027 (second special)", wptListAnswer, augWhen));
+ok("1 月那場（全程 1/2–11）vs 頁面上的主賽 1/7–11 → 收",
+  acceptSeries("WPT Prime Taiwan", wptListAnswer, { "Start Date": "2027-01-02", "End Date": "2027-01-11" }));
+ok("頁面上沒寫日期 → 不擋，照 AI 的判斷", acceptSeries("WPT Prime Taiwan 2027 (second special)", { ...wptListAnswer, series_start: "", series_end: "" }, augWhen));
+ok("差一年的同名賽事（APT Championship 2026 vs 頁面上的 2027）→ 拒收",
+  !acceptSeries("APT Championship 2026", { series_name: "APT Championship 2027", series_start: "2027-11-12", series_end: "2027-11-28" },
+    { "Start Date": "2026-11-13", "End Date": "2026-11-29" }));
+const sibToday = Date.parse("2026-11-04T00:00:00+08:00");
+const janRow = { _row: 138, Tournament: "WPT Prime Taiwan", "Start Date": "2027/01/07", "End Date": "2027/01/11", "Handbook URL": janLink };
+eq("AI 指的專屬頁是表上第 138 列（1 月、還沒結束）的 → 對到第 138 列", siblingRowForLink(janLink, augWhen, [janRow], srcGeneric, sibToday)?._row, 138);
+eq("問的就是 1 月那場（日期對得上）→ 不算別場",
+  siblingRowForLink(janLink, { "Start Date": "2027-01-02", "End Date": "2027-01-11" }, [janRow], srcGeneric, sibToday), null);
+eq("同一頁的舊列已經結束（下一屆沿用同一頁）→ 不算別場",
+  siblingRowForLink(janLink, augWhen, [{ ...janRow, "Start Date": "2025/08/14", "End Date": "2025/08/19" }], srcGeneric, sibToday), null);
+eq("泛用連結（WPT 賽程總表）→ 不算", siblingRowForLink("https://www.worldpokertour.com/events/", augWhen,
+  [{ ...janRow, "Handbook URL": "https://www.worldpokertour.com/events/" }], srcGeneric, sibToday), null);
+eq("既有列自己那一列（日期一定對得上）不算", siblingRowForLink(janLink, augWhen, [{ ...janRow, _row: 150, ...augWhen }], srcGeneric, sibToday), null);
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);

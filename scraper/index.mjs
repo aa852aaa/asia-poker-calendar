@@ -586,15 +586,25 @@ const DETAIL_SCHEMA = {
     buyin_evidence: { type: "STRING", description: "頁面上寫這個買入金額的那句原文，有填 me_buyin 就一定要填" },
     series_name: { type: "STRING", description: "這個買入所屬的賽事系列在頁面上的名稱（含屆次／場次字樣）" },
     same_series: { type: "BOOLEAN", nullable: true, description: "這個買入是不是就是問的那一場（同系列不同屆也算不是）" },
+    series_start: { type: "STRING", description: "這個買入所屬那一場在頁面上寫的開始日期 YYYY-MM-DD，沒寫就空字串" },
+    series_end: { type: "STRING", description: "那一場的結束日期 YYYY-MM-DD，沒寫就空字串" },
     handbook_url: { type: "STRING" },
   },
   required: [],
 };
 
-// 詳情頁和 PDF 共用的「別答錯場」規則
-const SAME_SERIES_RULES = (name) => `- 頁面上可能列著同一個系列的另一場（例如問的是「${name}」，頁面是它的上一屆或下一屆、Warm-up、
+// 詳情頁和 PDF 共用的「別答錯場」規則。when = 問的這場的日期（「2027-08-12～2027-08-23」），
+// 同名不同檔期只能靠日期分（2026-11-02：8 月的 WPT Prime Taiwan (second special) 被配到 WPT 官網上 1 月那場）
+const SAME_SERIES_RULES = (name, when = "") => `- 頁面上可能列著同一個系列的另一場（例如問的是「${name}」，頁面是它的上一屆或下一屆、Warm-up、
   或整個活動節裡另一個品牌的賽事）。series_name 填「這個買入所屬的系列在頁面上的名稱」（含屆次／場次字樣），
-  same_series 填它是不是就是「${name}」這一場——同系列但不同屆／不同場次就是 false，而且 me_buyin 要填 null，不要拿別場的充數。`;
+  same_series 填它是不是就是「${name}」這一場——同系列但不同屆／不同場次就是 false，而且 me_buyin 要填 null，不要拿別場的充數。${
+  when
+    ? `
+- series_start／series_end 填頁面上那一場寫的日期（YYYY-MM-DD，頁面沒寫就空字串）。問的這場是 ${when}；
+  名稱一樣但日期差好幾個月的是另一個檔期（例如一年辦兩次），same_series 填 false。`
+    : ""
+}`;
+const whenText = (w) => (w?.["Start Date"] ? `${w["Start Date"]}～${w["End Date"] || w["Start Date"]}` : "");
 
 function listingPrompt(items, today) {
   const multi = items.length > 1;
@@ -682,8 +692,8 @@ ${cand}
 B 裡的每個索引都必須恰好出現在一組裡，不可以遺漏、不可以重複。`;
 }
 
-function detailPrompt(name, text) {
-  return `以下是撲克賽事系列「${name}」官網頁面的純文字（[link:...] 是連結，[img:...] 是圖片說明）。
+function detailPrompt(name, text, when = "") {
+  return `以下是撲克賽事系列「${name}」${when ? `（${when}）` : ""}官網頁面的純文字（[link:...] 是連結，[img:...] 是圖片說明）。
 
 請找出兩件事：
 1. 主賽事（Main Event）的買入金額（buy-in）
@@ -696,7 +706,7 @@ function detailPrompt(name, text) {
 - currency 用 ISO 代碼（TWD、JPY、KRW、USD、PHP、VND、MYR、HKD、SGD、THB、MOP、CNY、AUD、INR、EUR 等），找不到填空字串。
 - 有填 me_buyin 就**一定要**在 buyin_evidence 填「頁面上寫這個金額的那句原文」。
   原文裡是「保證獎金」「GTD」「Prize Pool」這類字的話那不是買入，me_buyin 要填 null。
-${SAME_SERIES_RULES(name)}
+${SAME_SERIES_RULES(name, when)}
 - handbook_url 填「這個系列自己的頁面」網址（從 [link:...] 取，例如 /series/xxx-2026）。找不到就填空字串，不要拿首頁充數。
 
 頁面內容：
@@ -1273,10 +1283,31 @@ export function editionConflict(a, b) {
   for (const t of ta) if (tb.has(t)) return false;
   return true;
 }
-// d 是詳情頁／PDF 的回答；只有 AI 明說「不是同一場」或屆次對不上時才拒收
-export function acceptSeries(name, d) {
+// d 是詳情頁／PDF 的回答；只有 AI 明說「不是同一場」、屆次對不上、或頁面上那場的日期對不上時才拒收。
+// when（可選）= 問的這場的 { "Start Date", "End Date" }。同名不同檔期只能靠日期分：2026-11-02 那輪，
+// 8 月的「WPT Prime Taiwan 2027 (second special)」被配到 WPT 官網上 1 月那場的買入和專屬頁（兩邊都沒有屆次記號）。
+// 頁面沒寫日期就不擋，照舊靠 AI 的判斷。
+export function acceptSeries(name, d, when = null) {
   if (d?.same_series === false) return false;
-  return !editionConflict(name, d?.series_name);
+  if (editionConflict(name, d?.series_name)) return false;
+  return !when || datesPlausiblySame(when, { "Start Date": d?.series_start, "End Date": d?.series_end });
+}
+
+// 專屬頁連結已經是表上「另一場」的：那一列還沒結束、日期又跟問的這場對不上 → 這個連結（和同一個回答裡的買入）
+// 講的是別場。同名不同檔期 AI 常認不出來，這道是不靠 AI 的防線（8 月那場被配到的，正是第 138 列 1 月那場的連結）。
+// 已經結束的列不算——下一屆沿用同一頁的時候，舊的那列早就結束了。
+// （既有列自己那一列的日期一定對得上，不會被當成別場。）
+export function siblingRowForLink(url, when, sheetRows, genericLinks, todayTs) {
+  const key = normalizeLink(url);
+  if (!key || isGenericLink(key, genericLinks)) return null;
+  const notEnded = todayTs - HIDE_ENDED_AFTER_DAYS * 86400_000;
+  return (
+    (sheetRows ?? []).find((r) => {
+      if (normalizeLink(r["Handbook URL"]) !== key) return false;
+      const end = parseYMD(r["End Date"]) ?? parseYMD(r["Start Date"]);
+      return end != null && end >= notEnded && !datesPlausiblySame(when, r);
+    }) ?? null
+  );
 }
 
 // 抓不到該場賽事的專屬連結時，用 sources.json 的 seriesLinks 補上主辦系列的官網。
@@ -1658,7 +1689,8 @@ function fileNameOf(url) {
   }
 }
 
-// target = { name, url, location }；ctx = { blacklist, seriesLinks, canCall(), onCall() }
+// target = { name, url, location, when }；ctx = { blacklist, seriesLinks, canCall(), onCall(), siblingOf() }
+// when = 這場的 { "Start Date", "End Date" }，用來分辨同名不同檔期
 // 回傳 { got, deeper, why }：got 是 pickBuyIn 的結果，deeper 是頁面指出的專屬頁（沒有就空字串），
 // why 是沒找到時給待補清單的原因。抓網頁／PDF 失敗會記進 why 繼續往下試；Gemini 的錯誤直接往外拋。
 async function huntBuyIn(target, ctx) {
@@ -1701,15 +1733,21 @@ async function huntBuyIn(target, ctx) {
     }
     if (!room()) return none;
     await spend();
-    const d = await geminiJSON(detailPrompt(target.name, text), DETAIL_SCHEMA);
-    // 專屬頁面連結只接受同一個網站的（避免被導到別的地方），而且要是還沒看過的
+    const d = await geminiJSON(detailPrompt(target.name, text, whenText(target.when)), DETAIL_SCHEMA);
     const hb = cleanLink(d?.handbook_url, ctx.blacklist);
-    if (!deeper && hb && sameDomain(hb, url) && !tried.has(normalizeLink(hb))) deeper = hb;
     const got = pickBuyIn(d, target.location);
-    if (got["ME Buy-in"] && !acceptSeries(target.name, d)) {
-      notes.push(`頁面上的買入屬於別場（${String(d?.series_name ?? "").slice(0, 40) || "AI 判定不是同一場"}）`);
+    // 這個回答講的是別場（AI 說的、屆次、頁面上那場的日期、或專屬頁是表上別場的）→ 買入和專屬頁都不能用。
+    // 以前只擋買入，別場的專屬頁照樣當成 deeper，最後被「升級」進表格（8 月那場拿到 1 月那場的連結就是這樣）
+    const sibling = hb ? ctx.siblingOf?.(hb, target) : null;
+    if (sibling || !acceptSeries(target.name, d, target.when)) {
+      const other = sibling
+        ? `表上第 ${sibling._row} 列「${String(sibling.Tournament).slice(0, 30)}」`
+        : String(d?.series_name ?? "").slice(0, 40) || "AI 判定不是同一場";
+      notes.push(got["ME Buy-in"] ? `頁面上的買入屬於別場（${other}）` : "官網頁面沒列主賽買入");
       return none;
     }
+    // 專屬頁面連結只接受同一個網站的（避免被導到別的地方），而且要是還沒看過的
+    if (!deeper && hb && sameDomain(hb, url) && !tried.has(normalizeLink(hb))) deeper = hb;
     if (!got["ME Buy-in"]) notes.push("官網頁面沒列主賽買入");
     return got;
   };
@@ -2259,6 +2297,7 @@ async function main() {
       seriesLinks,
       canCall: () => !dailyQuotaGone && detailCalls < MAX_DETAIL_CALLS && geminiCalls < GEMINI_DAILY_BUDGET,
       onCall: () => detailCalls++,
+      siblingOf: (url, target) => siblingRowForLink(url, target.when, existing, genericLinks, todayTs),
     };
     // 升級連結的共同規則：那格是空的、或只是泛用連結（系列首頁）才換成專屬頁；一樣的就不用寫
     const upgradable = (current, deeper) =>
@@ -2273,8 +2312,16 @@ async function main() {
         continue;
       }
       try {
-        const location = t.kind === "new" ? t.ev.Location : t.row.Location;
-        const { got, deeper, why } = await huntBuyIn({ name: t.name, url: t.url, location }, ctx);
+        const base = t.kind === "new" ? t.ev : t.row;
+        const { got, deeper, why } = await huntBuyIn(
+          {
+            name: t.name,
+            url: t.url,
+            location: base.Location,
+            when: { "Start Date": base["Start Date"], "End Date": base["End Date"] },
+          },
+          ctx,
+        );
 
         if (t.kind === "new") {
           if (got["ME Buy-in"]) Object.assign(t.ev, got);
