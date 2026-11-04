@@ -11,7 +11,7 @@ import {
   detectLinkFixes, needsBrowser, buildTodoList, normalizeLink, isGenericLink, sameDomain, hostOf,
   findPdfLinks, isPdfUrl, stripCategoryPrefix, isSameEventStrict, editionTokens, editionConflict, acceptSeries,
   formatLikeSheet, amountsIn, chooseMainEvent, pdfTextUsable, datesPlausiblySame, linkLooksRecurring, sameLinkRow,
-  festivalRangeFromSchedule, scheduleUrlFor, siblingRowForLink,
+  festivalRangeFromSchedule, scheduleUrlFor, siblingRowForLink, linkDuplicates, isWholeMonth,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -861,6 +861,63 @@ eq("同一頁的舊列已經結束（下一屆沿用同一頁）→ 不算別場
 eq("泛用連結（WPT 賽程總表）→ 不算", siblingRowForLink("https://www.worldpokertour.com/events/", augWhen,
   [{ ...janRow, "Handbook URL": "https://www.worldpokertour.com/events/" }], srcGeneric, sibToday), null);
 eq("既有列自己那一列（日期一定對得上）不算", siblingRowForLink(janLink, augWhen, [{ ...janRow, _row: 150, ...augWhen }], srcGeneric, sibToday), null);
+
+console.log("\n【33】2026-11-05 全表查核抓到的洞：縮寫害重複列、只寫月份的日期、澳洲名稱裡的 &#038;");
+// ① 10/12 那輪新增的「QPC Winter 2026」就是第 97 列，網站後來顯示兩次
+const qpcWinterLink = "https://quadspoker.vn/series/qpc-winter-2026";
+const qpcNew = { Tournament: "QPC Winter 2026", "Start Date": "2026-12-12", "End Date": "2026-12-24", "Handbook URL": qpcWinterLink };
+const row97 = { ...quadsWinter, "Handbook URL": qpcWinterLink };
+ok("QPC Winter 2026 vs Quads Poker Championship Winter 2026（日期重疊）→ 同一場", isSameEventStrict(qpcNew, row97));
+ok("反過來比也一樣", isSameEventStrict({ ...row97, "Start Date": "2026-12-12" }, { ...qpcNew, _row: 132 }));
+ok("QPC Circuit vs Quads Poker Championship Winter（就算日期重疊）→ 不是同一場",
+  !isSameEventStrict({ Tournament: "QPC Circuit 2026", "Start Date": "2026-12-12", "End Date": "2026-12-23" }, quadsWinter));
+ok("Gods of Poker 縮成 GOP（虛詞 of 也算一個字）",
+  isSameEventStrict({ Tournament: "Gods of Poker Incheon 2026 II", "Start Date": "2026-10-30", "End Date": "2026-11-08" },
+    { _row: 69, Tournament: "GOP Incheon 2026 II", "Start Date": "2026/10/30", "End Date": "2026/11/08" }));
+ok("四個字母的縮寫也認（ZSOP = Zodiac Series of Poker）",
+  isSameEventStrict({ Tournament: "Zodiac Series of Poker Taipei II", "Start Date": "2026-09-03", "End Date": "2026-09-14" },
+    { _row: 62, Tournament: "ZSOP TAIPEI II", "Start Date": "2026/09/03", "End Date": "2026/09/14" }));
+ok("表上只寫縮寫一個字（HPC）照舊不算——一個字太容易誤判",
+  !isSameEventStrict({ Tournament: "Harbour Poker Cup 2026", "Start Date": "2026-09-30", "End Date": "2026-10-04" },
+    { _row: 65, Tournament: "HPC", "Start Date": "2026/09/30", "End Date": "2026/10/04" }));
+ok("不是全大寫的一般字（Cup）不當縮寫",
+  !isSameEventStrict({ Tournament: "Kings Cup Sydney", "Start Date": "2026-12-01", "End Date": "2026-12-13" },
+    { _row: 109, Tournament: "Kings Championship Ultimate Poker Sydney", "Start Date": "2026/12/01", "End Date": "2026/12/13" }));
+eq("分組時新列手上只有系列首頁（泛用連結）→ sameLinkRow 不比",
+  sameLinkRow({ ...qpcNew, "Handbook URL": "https://quadspoker.vn/series" }, [row97], srcGeneric), null);
+eq("詳情頁換上專屬頁之後再比 → 對到第 97 列，不新增", linkDuplicates([qpcNew], [row97], srcGeneric).map((d) => d.row._row), [97]);
+const aptNew = { Tournament: "APT Taipei, Taiwan 2027", "Start Date": "2027-04-21", "End Date": "2027-05-03",
+  "Handbook URL": "https://www.theasianpokertour.com/series/apt-taipei-taiwan-2027" };
+eq("沒有重複的照常新增", linkDuplicates([aptNew], [row97], srcGeneric), []);
+eq("同一批兩筆換上同一個專屬頁 → 留第一筆",
+  linkDuplicates([qpcNew, { ...qpcNew, Tournament: "Quads Winter 2026" }], [], srcGeneric).map((d) => [d.ev.Tournament, d.row.Tournament, d.inBatch]),
+  [["Quads Winter 2026", "QPC Winter 2026", true]]);
+
+// ② HPC 官網賽後只剩「OCT 26」，AI 補成 10/01–10/31，把第 65 列主辦方原本公布的 9/30–10/04 改掉
+ok("10/01–10/31 是整個月", isWholeMonth("2026-10-01", "2026-10-31"));
+ok("表上的斜線格式也認", isWholeMonth("2026/10/01", "2026/10/31"));
+ok("2 月平年到 28 號", isWholeMonth("2027-02-01", "2027-02-28"));
+ok("2 月閏年到 29 號", isWholeMonth("2028-02-01", "2028-02-29"));
+ok("閏年的 2/1–2/28 不是整個月", !isWholeMonth("2028-02-01", "2028-02-28"));
+ok("9/30–10/04 不是", !isWholeMonth("2026-09-30", "2026-10-04"));
+ok("10/01–10/30 不是", !isWholeMonth("2026-10-01", "2026-10-30"));
+ok("跨月的 10/01–11/30 不是（太長交給 60 天那條）", !isWholeMonth("2026-10-01", "2026-11-30"));
+ok("只寫月份的候選 → 驗證退回",
+  String(validateEvent(mk({ Tournament: "Harbour Poker Cup 2026 OCT", "End Date": "2026-10-31" }), todayTs)).startsWith("只有月份沒寫日期"));
+const hpcRow = { _row: 65, Tournament: "HPC", "Start Date": "2026/09/30", "End Date": "2026/10/04" };
+const hpcT1 = { "Start Date": "2026-10-01", "End Date": "2026-10-31", _bestTier: 1, _srcs: ["T1:HPC"] };
+const nov2 = Date.parse("2026-11-02T00:00:00+08:00");
+eq("已經結束、新日期也在過去 → 不改（11/02 那輪的 HPC）", detectDateChange(hpcT1, hpcRow, nov2), null);
+eq("已經結束但延期到以後 → 照常改",
+  detectDateChange({ "Start Date": "2026-11-10", "End Date": "2026-11-14", _bestTier: 1, _srcs: ["T1:HPC"] }, hpcRow, nov2)?.newStart, "2026-11-10");
+ok("還沒結束的照常改", detectDateChange(fromT1, sheetRow, Date.parse("2026-09-20T00:00:00+08:00")) !== null);
+ok("沒給今天的日期就照舊（舊的呼叫方式不受影響）", detectDateChange(hpcT1, hpcRow) !== null);
+
+// ③ 澳洲彙整站的標題：WordPress 把「&」寫成 &#038;
+const ausTitle = (title) => parseTribeEvents({ events: [{ title, start_date: "2026-11-17 00:00:00", end_date: "2026-11-22 23:59:59" }] }, blacklist)[0]?.tournament;
+eq("&#038; 還原成 &，破折號照舊換成連字號（跟表上既有的名稱一致）",
+  ausTitle("APLPT &#8211; Albury &#8211; SS&#038;A Club (NSW)"), "APLPT - Albury - SS&A Club (NSW)");
+eq("&#8217;、&amp; 也還原", ausTitle("Churchill&#8217;s Kings Cup &amp; More"), "Churchill’s Kings Cup & More");
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);

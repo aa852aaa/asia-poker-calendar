@@ -645,7 +645,8 @@ function listingPrompt(items, today) {
   就填「Poker Dream 27 Jeju」）。沒有取消字樣的一律填 false。
 - location 用英文「City, Country」格式，例如 "Taipei, Taiwan"、"Jeju, South Korea"。頁面上只有國家沒有城市時就只填國家。
 - detail_url 填該系列詳情頁的完整網址（從 [link:...] 取），找不到就填空字串。
-- 找不到的欄位填空字串，不要編造。頁面上沒有日期的系列就不要輸出。
+- 找不到的欄位填空字串，不要編造。頁面上沒有日期的系列就不要輸出；只寫了月份、沒寫幾號的（例如「OCT 26」）
+  也一樣不要輸出，絕對不要自己補成 1 號到月底。
 - tournament 要能「單獨看懂」。列表上如果只寫短標題（例如「2026 Sapporo #02」），請從頁面標題或
   網站名稱找出所屬的巡迴賽／系列名稱補在前面（變成「JOPT 2026 Sapporo #02」）。
   這個名稱會單獨顯示在賽程表上，旁邊沒有任何說明。
@@ -964,6 +965,15 @@ export function linkLooksRecurring(url, pageText) {
   return false;
 }
 
+// 剛好是一整個日曆月（1 號到月底）。錦標賽系列不會這麼剛好，通常是頁面只寫了月份、AI 自己補的
+export function isWholeMonth(start, end) {
+  const ymd = (v) => String(v ?? "").trim().match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/)?.slice(1).map(Number);
+  const a = ymd(start);
+  const b = ymd(end);
+  if (!a || !b || a[0] !== b[0] || a[1] !== b[1] || a[2] !== 1) return false;
+  return b[2] === new Date(Date.UTC(b[0], b[1], 0)).getUTCDate(); // 下個月的第 0 天＝這個月最後一天
+}
+
 export function validateEvent(ev, todayTs) {
   const s = parseYMD(ev["Start Date"]);
   const e = parseYMD(ev["End Date"]);
@@ -975,6 +985,9 @@ export function validateEvent(ev, todayTs) {
   // 彙整站的年度日曆頁很雜，AI 偶爾把公告日期當成賽期（WSOP Paradise 被抽成 9/16 單日，
   // 實際是 12/1–12/18）。錦標賽系列不會只有一天，彙整站來的單日資料一律當誤讀。
   if (ev._tier === 3 && e === s) return "彙整站的單日賽事（可能誤讀日期）";
+  // HPC 官網賽後改成成績頁、只剩「OCT 26」，AI 自己補成 10/01–10/31，2026-11-02 把第 65 列
+  // 主辦方原本公布的 9/30–10/04 改掉了。台灣賽事一律上站，下一屆要是也這樣就會整個月顯示在網站上
+  if (isWholeMonth(ev["Start Date"], ev["End Date"])) return "只有月份沒寫日期（1 號到月底，多半是 AI 自己補的）";
   if (e < todayTs - HIDE_ENDED_AFTER_DAYS * 86400_000) return "已結束";
   const year = Number(String(ev["Start Date"]).slice(0, 4));
   const nowYear = Number(taipeiTodayYMD().slice(0, 4));
@@ -1230,16 +1243,35 @@ export function stripCategoryPrefix(name) {
 // LLM 分組說「表上沒有」之後的最後一道保守防線：名稱幾乎一樣（去掉年份和虛詞後，短的那個整段出現在長的裡面）
 // 而且日期重疊，就當成同一場。「WPT Seoul」⊂「WPT Seoul 2026」是；「Manila Megastack 25」vs「Manila Megastack Warm-up」不是。
 // 短的那個至少要兩個字，只有一個字（「APPT」）太容易誤判。
+// 縮寫也認：一邊寫「QPC Winter 2026」、另一邊寫「Quads Poker Championship Winter 2026」就是同一場
+// （2026-10-12 就這樣多了一列，兩列後來都補到買入，網站顯示兩次）。
 const NAME_STOPWORDS = new Set(["the", "of", "and", "event", "events", "special", "live", "by", "presented"]);
+// 只認原文全大寫、3–5 個字母的字（QPC、GOP、ZSOP），「Cup」「Open」這種一般字不算；羅馬數字（III）也不算
+function acronymsIn(name) {
+  return (String(name ?? "").match(/\b[A-Z]{3,5}\b/g) ?? [])
+    .filter((t) => !/^[IVXL]+$/.test(t))
+    .map((t) => t.toLowerCase());
+}
+// 連續幾個字的字首剛好拼成縮寫（Gods of Poker → gop，虛詞也算一個字）就換成縮寫
+function collapseAcronyms(words, acronyms) {
+  const out = [];
+  for (let i = 0; i < words.length; ) {
+    const ac = acronyms.find((a) => i + a.length <= words.length && [...a].every((ch, k) => words[i + k][0] === ch));
+    out.push(ac ?? words[i]);
+    i += ac ? ac.length : 1;
+  }
+  return out;
+}
 export function isSameEventStrict(ev, ex) {
   const s1 = parseYMD(ev["Start Date"]);
   const e1 = parseYMD(ev["End Date"]) ?? s1;
   const s2 = parseYMD(ex["Start Date"]);
   const e2 = parseYMD(ex["End Date"]) ?? s2;
   if (s1 == null || s2 == null || !rangesOverlap(s1, e1, s2, e2)) return false;
-  const toks = (n) => normName(n).split(" ").filter((t) => t && !NAME_STOPWORDS.has(t));
-  const a = toks(ev.Tournament);
-  const b = toks(ex.Tournament);
+  const toks = (n, other) =>
+    collapseAcronyms(normName(n).split(" ").filter(Boolean), acronymsIn(other)).filter((t) => !NAME_STOPWORDS.has(t));
+  const a = toks(ev.Tournament, ex.Tournament);
+  const b = toks(ex.Tournament, ev.Tournament);
   const [short, long] = a.length <= b.length ? [a, b] : [b, a];
   if (short.length < 2) return false;
   return ` ${long.join(" ")} `.includes(` ${short.join(" ")} `);
@@ -1397,9 +1429,11 @@ export function parseTribeEvents(json, blacklist) {
     const native = cleanLink(org?.website || e.venue?.website || "", blacklist);
     const city = fixCity(e.venue?.city ?? "");
     const country = fixCountry(e.venue?.country ?? "");
+    // 破折號照舊換成連字號（表上既有的名稱都是這樣寫的），其他編碼一律還原——
+    // WordPress 把「&」寫成 &#038;，以前沒還原，表上出現過「SS&#038;A Club」
     const rawTitle = String(e.title ?? "")
       .replace(/&#8211;|&#8212;/g, "-")
-      .replace(/&amp;/g, "&")
+      .replace(/&[a-z]+;|&#x?[0-9a-f]+;/gi, decodeEntity)
       .trim();
     // PCA 用「***CANCELLED*** 賽事名」標記取消，把標記拆下來當旗標、名稱留乾淨的
     const { name, cancelled } = stripCancelMark(rawTitle);
@@ -1542,6 +1576,21 @@ export function sameLinkRow(ev, sheetRows, genericLinks) {
   const link = normalizeLink(ev?.["Handbook URL"]);
   if (!link || isGenericLink(link, genericLinks)) return null;
   return (sheetRows ?? []).find((r) => normalizeLink(r["Handbook URL"]) === link && datesPlausiblySame(ev, r)) ?? null;
+}
+
+// 新增列補完詳情頁之後再比一次連結：分組時新列手上常常只有系列首頁（泛用連結，sameLinkRow 不比），
+// 專屬頁是詳情頁那步才換上的。2026-10-12「QPC Winter 2026」就是這樣跟第 97 列重複——換上的專屬頁
+// 跟第 97 列一模一樣。回傳要拿掉的 [{ ev, row }]：row 是表上那一列，或這輪先排進來的另一筆新增（inBatch）
+export function linkDuplicates(newRows, sheetRows, genericLinks) {
+  const dups = [];
+  const kept = [];
+  for (const ev of newRows ?? []) {
+    const row = sameLinkRow(ev, sheetRows, genericLinks);
+    const twin = row ? null : sameLinkRow(ev, kept, genericLinks);
+    if (row || twin) dups.push({ ev, row: row ?? twin, inBatch: !row });
+    else kept.push(ev);
+  }
+  return dups;
 }
 
 // 把 LLM 給的 matched_sheet_row 對回實際那一列
@@ -1931,10 +1980,17 @@ export function detectLinkFixes(existing, linkFixes) {
 }
 
 // 改期偵測：既有列的日期 vs 主辦方（tier 1/2）現在公布的日期
-export function detectDateChange(merged, sheetRow) {
+// todayTs（可選）：給了就多一條——表上那場已經結束、新日期也在過去 → 不改。賽後官網常改成成績頁，
+// 上面的日期不可靠（2026-11-02 HPC 第 65 列 9/30–10/04 被改成 10/01–10/31），改了也只是改寫歷史。延期到以後的照常改
+export function detectDateChange(merged, sheetRow, todayTs = null) {
   if (!sheetRow) return null;
   if ((merged._dateTier ?? merged._bestTier) > 2) return null; // 只信主辦方與場館方，彙整站的日期不拿來改人工資料
   if (merged._noDateUpdate) return null; // 只是主賽日期（WPT 的整檔賽程還沒公布），不能拿來縮短整檔賽事節
+  if (todayTs != null) {
+    const oldEnd = parseYMD(sheetRow["End Date"]) ?? parseYMD(sheetRow["Start Date"]);
+    const newEnd = parseYMD(merged["End Date"]) ?? parseYMD(merged["Start Date"]);
+    if (oldEnd != null && newEnd != null && oldEnd < todayTs && newEnd < todayTs) return null;
+  }
   const changes = {};
   for (const [f, key] of [["Start Date", "newStart"], ["End Date", "newEnd"]]) {
     const oldTs = parseYMD(sheetRow[f]);
@@ -2226,7 +2282,7 @@ async function main() {
       // 同樣的道理：LLM 沒真的判過（走保守退路）就沒有可靠的對應列，不要去改表格——
       // 連結一樣的例外，那是確定性的比對，不靠 AI
       if ((g.alreadyInSheet !== null || linkRow) && target) {
-        const chg = exists ? detectDateChange(row, target) : null;
+        const chg = exists ? detectDateChange(row, target, todayTs) : null;
         if (chg && !dateChanges.some((c) => c.row === chg.row)) dateChanges.push(chg);
         // 賽程表和報名費是後來才公布的，每輪都回頭補一次空欄位
         for (const f of detectBlankFills(row, target, genericLinks)) {
@@ -2356,6 +2412,20 @@ async function main() {
     }
     if (stopped) console.warn(`  ${stopped}`);
     console.log(`  詳情頁這段用了 ${detailCalls} 次 AI 呼叫`);
+  }
+
+  // 詳情頁那步可能把新增列的連結換成了專屬頁，換完再跟表上和同批比一次（見 linkDuplicates）。
+  // 表上這輪也排了換連結的，用換之後的連結比
+  const pendingLink = new Map(blankFills.filter((f) => f.col === "Handbook URL").map((f) => [f.row, f.value]));
+  const sheetNow = existing.map((r) => (pendingLink.has(r._row) ? { ...r, "Handbook URL": pendingLink.get(r._row) } : r));
+  const dupByLink = linkDuplicates(toAppend, sheetNow, genericLinks);
+  for (const { ev, row, inBatch } of dupByLink) {
+    const where = inBatch ? `這輪另一筆新增的「${row.Tournament}」` : `第 ${row._row} 列「${row.Tournament}」`;
+    console.log(`  🔗 「${ev.Tournament}」換上專屬頁之後跟${where}的連結一樣，當同一場（不新增）`);
+  }
+  if (dupByLink.length) {
+    const drop = new Set(dupByLink.map((d) => d.ev));
+    toAppend.splice(0, toAppend.length, ...toAppend.filter((ev) => !drop.has(ev)));
   }
 
   // 有 Source 欄就標記 AI，方便在 Sheet 裡辨識
