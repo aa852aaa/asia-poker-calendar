@@ -11,7 +11,7 @@ import {
   detectLinkFixes, needsBrowser, buildTodoList, normalizeLink, isGenericLink, sameDomain, hostOf,
   findPdfLinks, isPdfUrl, stripCategoryPrefix, isSameEventStrict, editionTokens, editionConflict, acceptSeries,
   formatLikeSheet, amountsIn, chooseMainEvent, pdfTextUsable, datesPlausiblySame, linkLooksRecurring, sameLinkRow,
-  festivalRangeFromSchedule, scheduleUrlFor, siblingRowForLink, linkDuplicates, isWholeMonth,
+  festivalRangeFromSchedule, scheduleUrlFor, siblingRowForLink, linkDuplicates, isWholeMonth, isSameEventWrongEdition,
 } from "./index.mjs";
 
 let pass = 0, fail = 0;
@@ -918,6 +918,55 @@ const ausTitle = (title) => parseTribeEvents({ events: [{ title, start_date: "20
 eq("&#038; 還原成 &，破折號照舊換成連字號（跟表上既有的名稱一致）",
   ausTitle("APLPT &#8211; Albury &#8211; SS&#038;A Club (NSW)"), "APLPT - Albury - SS&A Club (NSW)");
 eq("&#8217;、&amp; 也還原", ausTitle("Churchill&#8217;s Kings Cup &amp; More"), "Churchill’s Kings Cup & More");
+
+console.log("\n【34】2026-11-05 手動跑一輪抓到的：屆數寫錯的重複列、仁川被標成首爾、日期每週來回改");
+// ① SoMuchPoker 把馬尼拉 1/22–31 的 Manila Super Series 25 寫成 26，多了一列
+const mss25 = { _row: 123, Tournament: "Manila Super Series 25", "Start Date": "2027/01/22", "End Date": "2027/01/31",
+  Location: "菲律賓 馬尼拉\nManila, Philippines", "Handbook URL": "https://www.pokerstarslivemanila.com/tournaments/" };
+const mss26 = { Tournament: "Manila Super Series 26", "Start Date": "2027-01-22", "End Date": "2027-01-30",
+  Location: "Manila, Philippines", "Handbook URL": "https://www.pokerstarslivemanila.com/tournaments/" };
+ok("前面幾道擋不到：連結是系列首頁、名稱不互相包含",
+  sameLinkRow(mss26, [mss25], srcGeneric) === null && !isSameEventStrict(mss26, mss25));
+ok("名稱只差屆數、日期差 1 天、同國家 → 同一場", isSameEventWrongEdition(mss26, mss25));
+ok("羅馬數字的屆數也算（RPT Championship VI vs IV）", isSameEventWrongEdition(
+  { Tournament: "RPT Championship VI", "Start Date": "2027-03-10", "End Date": "2027-03-21", Location: "Hanoi, Vietnam" },
+  { _row: 143, Tournament: "RPT Championship IV", "Start Date": "2027/03/10", "End Date": "2027/03/21", Location: "越南 河內\nHanoi, Vietnam" }));
+ok("South Korea 和表上的 Korea 算同一個國家", isSameEventWrongEdition(
+  { Tournament: "GOP Incheon 2026 III", "Start Date": "2026-10-30", "End Date": "2026-11-08", Location: "Incheon, South Korea" },
+  { _row: 69, Tournament: "GOP Incheon 2026 II", "Start Date": "2026/10/30", "End Date": "2026/11/08", Location: "韓國 仁川\nIncheon, Korea" }));
+ok("下一屆（一個月後）→ 不是", !isSameEventWrongEdition({ ...mss26, "Start Date": "2027-02-22", "End Date": "2027-03-07" }, mss25));
+ok("開頭一樣、結尾差 3 天 → 不是", !isSameEventWrongEdition({ ...mss26, "End Date": "2027-02-03" }, mss25));
+ok("不同國家 → 不是", !isSameEventWrongEdition({ ...mss26, Location: "Hanoi, Vietnam" }, mss25));
+ok("沒有地點 → 不是（寧可漏）", !isSameEventWrongEdition({ ...mss26, Location: "" }, mss25));
+ok("屆數以外的字不一樣（Megastack vs Super Series）→ 不是", !isSameEventWrongEdition({ ...mss26, Tournament: "Manila Megastack 26" }, mss25));
+ok("季節不算屆數（QPC Summer vs Spring）→ 不是", !isSameEventWrongEdition(
+  { Tournament: "QPC Summer 2027", "Start Date": "2027-03-01", "End Date": "2027-03-10", Location: "Vietnam" },
+  { _row: 142, Tournament: "QPC Spring 2027", "Start Date": "2027/03/01", "End Date": "2027/03/10", Location: "越南 \nVietnam" }));
+ok("拿掉屆數只剩一個字（APC 6 vs APC 5）→ 不是", !isSameEventWrongEdition(
+  { Tournament: "APC 6", "Start Date": "2026-12-01", "End Date": "2026-12-06", Location: "Taipei, Taiwan" },
+  { _row: 58, Tournament: "APC 5", "Start Date": "2026/12/01", "End Date": "2026/12/06", Location: "台灣 台北\nTaipei, Taiwan" }));
+
+// ② PCA 把仁川的 Paradise City 的 city 標成「Seoul」，第 96、152 列寫成首爾
+const pcaKr = (venue, city) => parseTribeEvents({ events: [{ title: "Infinity Poker Incheon 2027", start_date: "2027-03-05 00:00:00",
+  end_date: "2027-03-14 23:59:59", venue: { venue, city, country: "Korea, Republic of" } }] }, blacklist)[0]?.location;
+eq("場館名稱寫了 Incheon → 用仁川，不用 API 的 Seoul", pcaKr("Paradise City Incheon", "Seoul"), "Incheon, South Korea");
+eq("轉成表上的雙語格式", formatLocation(pcaKr("Paradise City Incheon", "Seoul")), "韓國 仁川\nIncheon, Korea");
+eq("場館名稱沒寫城市 → 照舊用 API 的", pcaKr("Paradise Casino Walkerhill", "Seoul"), "Seoul, South Korea");
+eq("Jeju、Busan 也認", [pcaKr("Jeju Dream Tower", "Seoul"), pcaKr("Paradise Casino Busan", "Seoul")],
+  ["Jeju, South Korea", "Busan, South Korea"]);
+
+// ③ 第 70 列 APT Championship 2026：CTP 從 11/12 的 Event 0 算起、APT 官網列表頁寫 11/13，兩邊輪流改
+const row70 = { _row: 70, Tournament: "APT Championship 2026", "Start Date": "2026/11/12", "End Date": "2026/11/29" };
+const aptT1 = { "Start Date": "2026-11-13", "End Date": "2026-11-29", _bestTier: 1, _srcs: ["T1:APT"] };
+eq("開頭往內縮 1 天 → 不改，以寬的全程為準", detectDateChange(aptT1, row70), null);
+eq("結尾往內縮 1 天也不改", detectDateChange({ ...aptT1, "Start Date": "2026-11-12", "End Date": "2026-11-28" }, row70), null);
+eq("頭尾各縮 3 天 → 還是不改", detectDateChange({ ...aptT1, "Start Date": "2026-11-15", "End Date": "2026-11-26" }, row70), null);
+eq("縮 4 天 → 當成真的改期", detectDateChange({ ...aptT1, "Start Date": "2026-11-16" }, row70)?.newStart, "2026-11-16");
+eq("往外擴 1 天（表上 11/13、CTP 給 11/12）→ 照常改",
+  detectDateChange({ ...aptT1, "Start Date": "2026-11-12", _bestTier: 2, _srcs: ["T2:CTP"] }, { ...row70, "Start Date": "2026/11/13" })?.newStart,
+  "2026-11-12");
+const shifted = detectDateChange({ ...aptT1, "End Date": "2026-11-30" }, row70);
+eq("整段往後挪 1 天（不是往內縮）→ 照常改", [shifted?.newStart, shifted?.newEnd], ["2026-11-13", "2026-11-30"]);
 
 console.log(`\n${"─".repeat(50)}\n通過 ${pass}｜失敗 ${fail}`);
 process.exit(fail ? 1 : 0);

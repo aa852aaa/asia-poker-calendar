@@ -32,6 +32,7 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 const MAX_NEW_PER_SOURCE = 30; // 單一來源單次最多抽出筆數（防 LLM 幻覺灌爆表格）
 const MAX_APPEND_TOTAL = 60; // 單次執行寫入總上限
 const MAX_DATE_SHIFT_DAYS = 45; // 改期偵測：日期差超過這個天數就不當成同一場的改期，只報不改
+const SMALL_SHRINK_DAYS = 3; // 改期偵測：新日期只比表上往內縮這幾天以內（頭尾各算）就不改，以寬的全程為準
 // 額度相關的參數跟著模型走，所以做成環境變數（GitHub 的 repository variables），換模型不用改 code：
 //   GEMINI_DAILY_LIMIT  該模型免費層的每日上限。gemini-3.6-flash 實測 20；gemini-3.5-flash-lite 是 500
 //   MAX_DETAIL_CALLS    單輪最多抓幾個詳情頁補買入
@@ -1277,6 +1278,29 @@ export function isSameEventStrict(ev, ex) {
   return ` ${long.join(" ")} `.includes(` ${short.join(" ")} `);
 }
 
+// 名稱只差屆數、日期幾乎一樣（頭尾各差 2 天內）、又在同一個國家 → 同一場，是有一邊把屆數寫錯了：
+// 同一個系列不可能同時辦兩屆。2026-11-05 SoMuchPoker 把馬尼拉 1/22–31 的 Manila Super Series 25 寫成 26，
+// 連結是系列首頁（泛用連結）、名稱又不互相包含，前面幾道都沒擋到，多了一列。
+// 只拿掉數字、羅馬數字、#03、S5、Q3 這類屆數；季節、Warm-up、Final 不拿（那些本來就是不同場）。
+const EDITION_SLACK_DAYS = 2;
+const EDITION_NUMBER = /^(\d{1,3}(st|nd|rd|th)?|[ivx]{2,6}|v|[sq]\d{1,2})$/;
+export function isSameEventWrongEdition(ev, ex) {
+  const gap = (a, b) => {
+    const x = parseYMD(a);
+    const y = parseYMD(b);
+    return x == null || y == null ? Infinity : Math.abs(x - y) / 86400_000;
+  };
+  if (gap(ev["Start Date"], ex["Start Date"]) > EDITION_SLACK_DAYS) return false;
+  if (gap(ev["End Date"] || ev["Start Date"], ex["End Date"] || ex["Start Date"]) > EDITION_SLACK_DAYS) return false;
+  // 候選是英文「Manila, Philippines」、表上是雙語，國家都取英文那段；South Korea 和表上的 Korea 要當成一樣
+  const country = (loc) => ZH_COUNTRY[countryOf(loc)]?.[0] ?? countryOf(loc);
+  if (!country(ev.Location) || country(ev.Location) !== country(ex.Location)) return false;
+  const rest = (n) => normName(n).split(" ").filter((t) => t && !NAME_STOPWORDS.has(t) && !EDITION_NUMBER.test(t));
+  const a = rest(ev.Tournament);
+  // 拿掉屆數只剩一個字（APC 5 vs APC 6）跟 isSameEventStrict 一樣不認，太容易誤判
+  return a.length >= 2 && a.join(" ") === rest(ex.Tournament).join(" ");
+}
+
 // 詳情頁／PDF 答回來的買入，可能屬於同系列的另一場（RPT 首頁列的是 Championship IV，問的是 Grand Final，
 // 2026-09-19 試跑就答了 IV 的 27.5M）。除了叫 AI 自己判斷 same_series，程式再比一次「屆次記號」：
 // 數字、羅馬數字、序數、#03、Q3、S5、季節、Grand Final／Final／Warm-up／Mini。兩邊都有記號但對不上就不收。
@@ -1421,13 +1445,21 @@ export function sameDomain(a, b) {
   return !!x && x === base(b);
 }
 
+// 場館名稱裡寫了城市就以它為準：PCA 把仁川的「Paradise City Incheon」的 city 標成「Seoul」，
+// 2026-11-05 第 96、152 列因此寫成首爾。只認韓國這幾個常寫在場館名稱裡的城市
+const VENUE_CITY = { incheon: "Incheon", jeju: "Jeju", busan: "Busan" };
+function cityFromVenue(venue) {
+  const m = String(venue ?? "").toLowerCase().match(/\b(incheon|jeju|busan)\b/);
+  return m ? VENUE_CITY[m[1]] : "";
+}
+
 // tier 3 的 PokerCalendar.asia：The Events Calendar REST API，結構化資料，不需要 LLM
 export function parseTribeEvents(json, blacklist) {
   return (json.events ?? []).map((e) => {
     const org = (e.organizer ?? [])[0];
     // 原生連結優先序：主辦官網 > 場館官網。API 自己的 e.url 是彙整站頁面，一律不用
     const native = cleanLink(org?.website || e.venue?.website || "", blacklist);
-    const city = fixCity(e.venue?.city ?? "");
+    const city = cityFromVenue(e.venue?.venue) || fixCity(e.venue?.city ?? "");
     const country = fixCountry(e.venue?.country ?? "");
     // 破折號照舊換成連字號（表上既有的名稱都是這樣寫的），其他編碼一律還原——
     // WordPress 把「&」寫成 &#038;，以前沒還原，表上出現過「SS&#038;A Club」
@@ -1982,6 +2014,9 @@ export function detectLinkFixes(existing, linkFixes) {
 // 改期偵測：既有列的日期 vs 主辦方（tier 1/2）現在公布的日期
 // todayTs（可選）：給了就多一條——表上那場已經結束、新日期也在過去 → 不改。賽後官網常改成成績頁，
 // 上面的日期不可靠（2026-11-02 HPC 第 65 列 9/30–10/04 被改成 10/01–10/31），改了也只是改寫歷史。延期到以後的照常改
+// 新日期只是往內縮一點點（頭尾各 SMALL_SHRINK_DAYS 天內）也不改，以比較寬的全程為準：兩個來源對系列從哪天開始
+// 常差一兩天（2026-11-05 第 70 列 APT Championship 2026：CTP 從 11/12 的 Event 0 算起、APT 官網列表頁寫 11/13，
+// 兩邊輪流改，表上的日期會每週來回跳）。往外擴（整檔賽程比較長）和縮更多天的真改期照常改
 export function detectDateChange(merged, sheetRow, todayTs = null) {
   if (!sheetRow) return null;
   if ((merged._dateTier ?? merged._bestTier) > 2) return null; // 只信主辦方與場館方，彙整站的日期不拿來改人工資料
@@ -2000,6 +2035,9 @@ export function detectDateChange(merged, sheetRow, todayTs = null) {
     if (oldTs !== newTs) changes[key] = merged[f];
   }
   if (!Object.keys(changes).length) return null;
+  const cutStart = (parseYMD(merged["Start Date"]) - parseYMD(sheetRow["Start Date"])) / 86400_000;
+  const cutEnd = (parseYMD(sheetRow["End Date"]) - parseYMD(merged["End Date"])) / 86400_000;
+  if (cutStart >= 0 && cutEnd >= 0 && cutStart <= SMALL_SHRINK_DAYS && cutEnd <= SMALL_SHRINK_DAYS) return null;
   return {
     row: sheetRow._row,
     tournament: sheetRow.Tournament,
@@ -2265,17 +2303,25 @@ async function main() {
         console.log(`  ↳ ${cand} → 第 ${sheetRow._row} 列「${sheetRow.Tournament}」${sheetRow["Start Date"]}~${sheetRow["End Date"]}`);
       }
     }
-    // AI 說表上沒有的，再用確定性的規則檢查一次：官網專屬連結一樣（sameLinkRow），或名稱幾乎一樣且日期重疊（isSameEventStrict）
+    // AI 說表上沒有的，再用確定性的規則檢查一次：官網專屬連結一樣（sameLinkRow）、名稱幾乎一樣且日期重疊（isSameEventStrict），
+    // 或名稱只差屆數、日期和國家都一樣（isSameEventWrongEdition）
     const linkRow = !exists ? sameLinkRow(row, existing, genericLinks) : null;
     const strictRow =
       !exists && !linkRow && g.alreadyInSheet !== null ? (existing.find((r) => isSameEventStrict(row, r)) ?? null) : null;
+    const editionRow =
+      !exists && !linkRow && !strictRow && g.alreadyInSheet !== null
+        ? (existing.find((r) => isSameEventWrongEdition(row, r)) ?? null)
+        : null;
     if (linkRow) {
       console.log(`  🔗 「${row.Tournament}」跟第 ${linkRow._row} 列「${linkRow.Tournament}」的官網連結一樣，當同一場（不新增）`);
     }
     if (strictRow) {
       console.log(`  🔒 「${row.Tournament}」跟第 ${strictRow._row} 列「${strictRow.Tournament}」名稱和日期都重疊，當同一場（不新增）`);
     }
-    const fallbackRow = linkRow ?? strictRow;
+    if (editionRow) {
+      console.log(`  🔢 「${row.Tournament}」跟第 ${editionRow._row} 列「${editionRow.Tournament}」只差屆數，日期和國家都一樣，當同一場（不新增）`);
+    }
+    const fallbackRow = linkRow ?? strictRow ?? editionRow;
     if (exists || fallbackRow) {
       skippedExisting++;
       const target = exists ? sheetRow : fallbackRow;
