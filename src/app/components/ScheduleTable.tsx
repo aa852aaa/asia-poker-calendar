@@ -146,6 +146,7 @@ export default function ScheduleTable({ rows }: { rows: Row[] }) {
   const scopeTotal = showAustralia ? rows.length : rows.length - australiaTotal;
 
   const igUrl = "https://www.instagram.com/a.smallbean_poker"; // 你要換 IG 就改這裡
+  const linksUrl = "https://asmallbean.vercel.app/"; // 個人連結彙整（YouTube、Discord、Twitch…）
 
   return (
     <div style={{ marginTop: 16 }}>
@@ -328,6 +329,10 @@ export default function ScheduleTable({ rows }: { rows: Row[] }) {
         <span className="dot">·</span>
         <a className="ig" href={igUrl} target="_blank" rel="noreferrer">
           IG
+        </a>
+        <span className="dot">·</span>
+        <a className="footLink" href={linksUrl} target="_blank" rel="noreferrer">
+          所有連結
         </a>
       </div>
     </div>

@@ -224,7 +224,8 @@ th {
 }
 
 .tLink,
-.ig {
+.ig,
+.footLink {
   color: var(--link);
   text-decoration: underline;
   text-underline-offset: 2px;
